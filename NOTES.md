@@ -59,7 +59,7 @@
   - New `tests/test_fog.py` (fog ADT, 4 GB map, spes/topaz preservation);
     `docs/FOG-PORT.md`; README fog section; CI push trigger for branch `fog`.
 - **Checks run on Windows host (2026-10-22)**:
-  `python -m unittest tests.test_fog tests.test_spes` = 21 tests OK.
+  `python -m unittest tests.test_fog tests.test_spes` = 22 tests OK.
   Full discovery has one pre-existing Windows-only error in
   `test_ios_root` (`os.chown` absent), unrelated to this work.
   `git apply`/kernel build was not run here; no fog kernel patch was added.
@@ -74,10 +74,9 @@
 - **Not done / needs the handset**:
   1. Full backup: run `tools/backup-fog.sh` before any flash or userdata iOS
      install (not needed for `fastboot boot` RAM tests). Watch for exit 3.
-  2. Run `tools/build-fog-diagnostic.sh` on macOS/CI with
-     `probe/fog-live/fog-live.dtb` (set `FOG_DEVICE=rain`) and `fastboot boot`
-     the image. Expect PID 1 fbcon text on 720x1650. If the screen is black,
-     check splash base/panel geometry (reboot recovers Android).
+  2. Boot `shim/out/rain-diagnostic.img` with `fastboot boot` (built in CI,
+     see Images). Expect PID 1 fbcon text on 720x1650; `fastboot reboot`
+     recovers Android because nothing is written.
   3. Port SPI touch (QUPv3 SE0 `spi@4a80000`, reset 86, IRQ 80, 9.6 MHz,
      Novatek `swrst-n8`/fast-read), add a fog coordinate clamp, gate it on
      `/fog-platform`.
@@ -87,8 +86,18 @@
   5. Verify keys/PMIC (`fpc` fingerprint, not needed for boot), UFS, GPU,
      Wi-Fi that were validated on spes; keep `sweetkeys=0 sweethw=0` until
      each is tested.
-- **Images**: none built or run for fog yet (no macOS/Clang here). `fog` is
-  pushed to `origin` (`MotoE7hype/ios-fog`); `upstream` is `AdyaGMD/ios-spes`.
+- **Images (built, not booted)**: the `fog-image` workflow (ubuntu, dispatch)
+  builds the RAM-only diagnostic in CI; run `39819237739` on `fog` succeeded
+  and uploaded artifact `fog-diagnostic-rain`:
+  - `rain-diagnostic.img` 17,440,768 bytes,
+    sha256 `eeec115c83d0c39439b3a49013f90b26bf7f03ae398dfd7fb2385f23456bed8b`
+  - inputs: `device=rain`, `memory=0x100000000:0x40000000`,
+    kernel from xnu run `39815516899` (17.8 MB `kernel.development.sweet`)
+  - local copy `shim/out/rain-diagnostic.img` (git-ignored); header v3,
+    cmdline `console=null`, shim + XNU payload + 97-byte empty ramdisk.
+  - `mkadt --memory-range` reproduces `--memory-dtb` byte-for-byte (fixed
+    seed); `tools/vendor/mkbootimg` (AOSP android-13.0.0_r1) is committed
+    because googlesource returned 503 from the runner.
 
 # GPU Stage 5 ARM SMMUv2 SMR Invalidation Before S2CR Routing Update — 2026-10-22
 

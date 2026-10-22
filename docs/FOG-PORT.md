@@ -199,30 +199,42 @@ download the `xnu-kernel` artifact from a `spes` run. The kernel patch set is
 shared; no fog kernel patch exists yet, so any current spes kernel works for
 the RAM-only diagnostic.
 
-Shim: AArch64 GNU toolchain + AOSP `mkbootimg`.
+Shim: AArch64 GNU toolchain + AOSP `mkbootimg` (vendored in
+`tools/vendor/mkbootimg`, Apache-2.0).
+
+Easiest: dispatch **`fog-image`** and download the artifact. It runs on
+`ubuntu-latest`, pulls the `xnu-kernel` artifact of the latest successful
+`xnu` run on this branch (or the run ID you pass), builds the image and
+uploads `<device>-diagnostic.img` + `.sha256`. No local toolchain needed.
 
 ```sh
-CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/research/mkbootimg/mkbootimg.py" \
-  tools/build-fog-diagnostic.sh xnu/out/kernel.development.sweet probe/fog-live/fog-live.dtb
+# local build (Linux/macOS)
+CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/tools/vendor/mkbootimg/mkbootimg.py" \
+  FOG_DEVICE=rain tools/build-fog-diagnostic.sh xnu/out/kernel.development.sweet probe/fog-live/fog-live.dtb
 ```
 
-Outputs `shim/out/fog-diagnostic.img` + `.sha256`, using the 720x1650 shim
-console. For this handset set `FOG_DEVICE=rain` and the outputs become
-`rain-diagnostic.*`. Nothing is sent to the phone.
+CI cannot read `probe/` (the live FDT holds the serial), so it passes the
+verified range instead: `--memory-range 0x100000000:0x40000000`
+(`FOG_MEMORY`). That produces byte-identical ADT output to the FDT path but is
+only valid on the unit it was measured on.
+
+Outputs `shim/out/<device>-diagnostic.img` + `.sha256`, using the 720x1650
+shim console. Nothing is sent to the phone.
 
 For the full UI (only after a diagnostic success and a userdata iOS root):
 
 ```sh
-CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/research/mkbootimg/mkbootimg.py" \
+CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/tools/vendor/mkbootimg/mkbootimg.py" \
   FOG_DEVICE=rain tools/build-fog-ios.sh xnu/out/kernel.development.sweet probe/fog-live/fog-live.dtb
 ```
 
 ## Test order (each step needs a user decision)
 
-1. `fastboot boot shim/out/fog-diagnostic.img` — a temporary RAM boot. Expect
+1. `fastboot boot shim/out/rain-diagnostic.img` — a temporary RAM boot. Expect
    the shim lines, then the kernel fbcon/PID 1 output on the 720x1650 panel.
    If the screen stays black, the splash base or panel geometry is wrong; the
-   phone is still running Android and a normal reboot recovers it.
+   phone is still running Android and `fastboot reboot` recovers it. Nothing is
+   written, so a full backup is only required before flashing.
 2. Only after PID 1 output: port SPI touch and verify coordinates. Do not
    enable `sweettouch=1` before that; the I2C probe is meaningless on fog.
 3. Install the iOS root into `userdata` only with explicit approval and a
