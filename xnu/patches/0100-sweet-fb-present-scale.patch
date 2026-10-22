@@ -1,0 +1,367 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index a41758f..c2eae07 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -24,6 +24,19 @@
+  *   28 GetDotPitch, 72 Enable/DisableNotifications [func, refcon, type, 0]
+  * Everything else is accepted and logged once.
+  *
++ * PRESENT SCALING
++ * The panel is not an iPhone size, so the display is presented as 1125x2436
++ * (iPhone X, see this dir's 0061 patch; sweetfb_native=1 presents the panel
++ * size instead) and mapped onto the real panel. A panel larger than that in
++ * both axes (spes 1080x2400) is a centre crop and stays a per-row memcpy. A
++ * panel smaller in either axis needs a resample, otherwise only the
++ * top-left corner of the frame would show. Boot-arg sweetfb_scale selects
++ *   0  never scale: crop to the overlap (the behaviour without scaling)
++ *   1  fit: uniform scale by the smaller ratio, letterboxed in black
++ *   2  fill: uniform scale by the larger ratio, cropping the overflow
++ * and the default picks 1 when the panel is smaller in either axis, else 0,
++ * so spes output is unchanged.
++ *
+  * SwapEnd copies the enabled layers' surfaces into the panel memory (no
+  * scaling, CPU copy). Vsync (notification type 5) is a 60 Hz timer that
+  * sends (count, mach_absolute_time, 0) as 32-bit halves to clients that
+@@ -49,6 +62,7 @@ extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-
+ #include <IOKit/IOTimerEventSource.h>
+ #include <IOKit/system.h>
+ #include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
+ #include <kern/clock.h>
+ #include <sys/proc.h>
+ 
+@@ -117,12 +131,18 @@ public:
+ 	uint32_t      fFlushTicks;    /* vsync ticks between panel copies */
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
+ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
++	uint32_t      fScaleMode;     /* sweetfb_scale: 0 crop, 1 fit, 2 fill */
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+ 	void addClient(IOMobileFramebufferUserClient *client);
+ 	void removeClient(IOMobileFramebufferUserClient *client);
+ 	void swap(const uint8_t *rec);
+ 	void present(const uint8_t *rec);
++	void presentScaled(const uint8_t *rec, uint32_t mask);
++	void presentLayer(const uint8_t *rec, uint32_t layer);
++	void blend(uint32_t *dst, uint32_t dw, uint32_t dh, const uint32_t *src,
++	    uint32_t sx, uint32_t sy, uint32_t sw, uint32_t sh,
++	    uint32_t srcStride, uint32_t swid, uint32_t shei);
+ };
+ 
+ /* Adapted from ios-topaz 0138: avoid QuartzCore's 30-second service wait.
+@@ -204,6 +224,28 @@ AppleCLCD::start(IOService *provider)
+ 	uint32_t hz = 10;
+ 	PE_parse_boot_argn("sweetfb_hz", &hz, sizeof(hz));
+ 	fFlushTicks = (hz == 0 || hz >= 60) ? 1 : 60 / hz;
++	/*
++	 * The panel is not an iPhone size, so the logical display is presented
++	 * as 1125x2436 (or the panel with sweetfb_native) and mapped onto the
++	 * real panel. A panel >= the logical display in both axes (spes
++	 * 1080x2400, native mode) is a crop and stays a memcpy; a smaller one
++	 * needs a resample, or only the top-left corner shows.
++	 *
++	 * The auto default is gated on /fog-platform so spes output is
++	 * unchanged; sweetfb_scale overrides it anywhere.
++	 */
++	fScaleMode = 0;
++	PE_parse_boot_argn("sweetfb_scale", &fScaleMode, sizeof(fScaleMode));
++	if (fScaleMode > 2) {
++		fScaleMode = 0;
++	}
++	{
++		DTEntry platform = NULL;
++		bool fog = (SecureDTLookupEntry(NULL, "/fog-platform", &platform) == kSuccess);
++		if (fog && fScaleMode == 0 && (fWidth < fLogicalW || fHeight < fLogicalH)) {
++			fScaleMode = 1;
++		}
++	}
+ 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+@@ -333,6 +375,14 @@ AppleCLCD::present(const uint8_t *rec)
+ {
+ 	uint32_t mask = get32(rec, 0x104);
+ 
++	/*
++	 * Panel smaller than the logical display: resample instead of copying
++	 * the overlapping part, so the whole frame reaches the panel.
++	 */
++	if (fScaleMode != 0) {
++		presentScaled(rec, mask);
++		return;
++	}
+ 
+ 	if (!fConsolePaused) {
+ 		int quiet = 0;
+@@ -421,6 +471,173 @@ AppleCLCD::present(const uint8_t *rec)
+ 	}
+ }
+ 
++/*
++ * Scaled present: the logical display (fLogicalW x fLogicalH, what userland
++ * renders into and GetDisplaySize reports) is resampled onto the panel
++ * (fWidth x fHeight). Only reached when the panel is smaller in some axis.
++ *
++ * Point-sampled, integer 16.16 mapping, per-pixel alpha, no SIMD. Fit
++ * letterboxes the result in black; fill crops the overflow.
++ */
++void
++AppleCLCD::presentScaled(const uint8_t *rec, uint32_t mask)
++{
++	/* Fit leaves letterbox bars, fill crops: both start from black. */
++	for (uint32_t y = 0; y < fHeight; y++) {
++		bzero((void *)(fPixels + (uint64_t)y * fRowBytes), (size_t)fWidth * 4);
++	}
++
++	for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
++		if (!(mask & (1u << layer))) {
++			continue;
++		}
++		uint32_t id = get32(rec, 0x54 + 4 * layer);
++		int32_t w = (int32_t)get32(rec, 0xc4 + 16 * layer + 8);
++		int32_t h = (int32_t)get32(rec, 0xc4 + 16 * layer + 12);
++		if (id == 0 || w <= 0 || h <= 0) {
++			continue;
++		}
++		presentLayer(rec, layer);
++	}
++}
++
++/*
++ * One layer: clip the logical destination rect to the logical display, map
++ * it through the same scale as the whole frame, and blend it into the panel.
++ */
++void
++AppleCLCD::presentLayer(const uint8_t *rec, uint32_t layer)
++{
++	const uint8_t *a = rec + 0x64 + 16 * layer;
++	const uint8_t *b = rec + 0xc4 + 16 * layer;
++	int32_t sx = (int32_t)get32(a, 0), sy = (int32_t)get32(a, 4);
++	int32_t lx = (int32_t)get32(b, 0), ly = (int32_t)get32(b, 4);
++	int32_t w = (int32_t)get32(b, 8), h = (int32_t)get32(b, 12);
++	SweetSurface *s;
++	uint64_t scale, mw, mh, pw, ph, offx, offy;
++	uint32_t dw, dh, dx, dy;
++
++	s = sweet_surface_copy(get32(rec, 0x54 + 4 * layer));
++	if (s == NULL || s == fSurface || s->memory == NULL) {
++		OSSafeReleaseNULL(s);
++		return;
++	}
++	if ((s->bytesPerElement ? s->bytesPerElement : 4) != 4 ||
++	    s->elementWidth != 1 || s->elementHeight != 1 || s->bytesPerRow == 0) {
++		s->release();           /* unsupported layout: leave it alone */
++		return;
++	}
++	if (w <= 0 || h <= 0) {
++		w = (int32_t)s->width;
++		h = (int32_t)s->height;
++	}
++	if (sx < 0 || sy < 0) {
++		sx = sy = 0;
++	}
++	if (w > (int32_t)s->width - sx) {
++		w = (int32_t)s->width - sx;
++	}
++	if (h > (int32_t)s->height - sy) {
++		h = (int32_t)s->height - sy;
++	}
++	/* Clip the logical rect to the logical display. */
++	if (lx < 0) {
++		sx -= lx;
++		w += lx;
++		lx = 0;
++	}
++	if (ly < 0) {
++		sy -= ly;
++		h += ly;
++		ly = 0;
++	}
++	if (lx + w > (int32_t)fLogicalW) {
++		w = (int32_t)fLogicalW - lx;
++	}
++	if (ly + h > (int32_t)fLogicalH) {
++		h = (int32_t)fLogicalH - ly;
++	}
++	if (w <= 0 || h <= 0) {
++		s->release();
++		return;
++	}
++
++	/* Logical -> panel, 16.16 fixed point so 1125 -> 720 keeps accuracy. */
++	mw = ((uint64_t)fWidth << 16) / fLogicalW;
++	mh = ((uint64_t)fHeight << 16) / fLogicalH;
++	scale = fScaleMode == 2 ? (mw > mh ? mw : mh) : (mw < mh ? mw : mh);
++	pw = ((uint64_t)fLogicalW * scale) >> 16;
++	ph = ((uint64_t)fLogicalH * scale) >> 16;
++	offx = pw < fWidth ? (fWidth - pw) / 2 : 0;
++	offy = ph < fHeight ? (fHeight - ph) / 2 : 0;
++	dw = (uint32_t)(((uint64_t)w * scale) >> 16);
++	dh = (uint32_t)(((uint64_t)h * scale) >> 16);
++	dx = (uint32_t)(offx + (((uint64_t)lx * scale) >> 16));
++	dy = (uint32_t)(offy + (((uint64_t)ly * scale) >> 16));
++	if (dw == 0 || dh == 0 || dx >= fWidth || dy >= fHeight) {
++		s->release();
++		return;
++	}
++	if (dx + dw > fWidth) {
++		dw = fWidth - dx;
++	}
++	if (dy + dh > fHeight) {
++		dh = fHeight - dy;
++	}
++
++	blend((uint32_t *)(fPixels + (uint64_t)dy * fRowBytes + (uint64_t)dx * 4),
++	    dw, dh, (const uint32_t *)s->kernelAddress(), (uint32_t)sx, (uint32_t)sy,
++	    (uint32_t)w, (uint32_t)h, s->bytesPerRow / 4, s->width, s->height);
++	s->release();
++}
++
++/*
++ * Point-sampled box resample with per-pixel alpha, so a translucent layer
++ * still composites over whatever the destination already holds.
++ */
++void
++AppleCLCD::blend(uint32_t *dst, uint32_t dw, uint32_t dh, const uint32_t *src,
++    uint32_t sx, uint32_t sy, uint32_t sw, uint32_t sh,
++    uint32_t srcStride, uint32_t swid, uint32_t shei)
++{
++	uint32_t dstStride = fRowBytes / 4;
++	uint32_t fixedX = ((sw << 16) / dw) + 1;
++	uint32_t fixedY = ((sh << 16) / dh) + 1;
++
++	for (uint32_t y = 0; y < dh; y++) {
++		uint32_t srcY = sy + (uint32_t)(((uint64_t)y * fixedY) >> 16);
++		uint32_t *drow = dst + (uint64_t)y * dstStride;
++		const uint32_t *srow;
++
++		if (srcY >= shei) {
++			srcY = shei - 1;
++		}
++		srow = src + (uint64_t)srcY * srcStride;
++		for (uint32_t x = 0; x < dw; x++) {
++			uint32_t srcX = sx + (uint32_t)(((uint64_t)x * fixedX) >> 16);
++			uint32_t p, alpha, d, ia, rb, ag;
++
++			if (srcX >= swid) {
++				srcX = swid - 1;
++			}
++			p = srow[srcX];
++			alpha = p >> 24;
++			if (alpha == 0xff) {
++				drow[x] = p;
++			} else if (alpha != 0) {
++				d = drow[x];
++				ia = 255 - alpha;
++				rb = (((p & 0x00ff00ff) * alpha) +
++				    ((d & 0x00ff00ff) * ia)) >> 8;
++				ag = ((((p >> 8) & 0x00ff00ff) * alpha) +
++				    (((d >> 8) & 0x00ff00ff) * ia)) >> 8;
++				drow[x] = (rb & 0x00ff00ff) | ((ag & 0x00ff00ff) << 8) |
++				    0xff000000;
++			}
++		}
++	}
++}
++
+ bool
+ IOMobileFramebufferUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type)
+ {
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 27bc49d..a0ed6fa 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -368,6 +368,7 @@ protected:
+ private:
+ 	IOLock *fLock;
+ 	int fLogicalW, fLogicalH, fOffX, fOffY;
++	int fPanelW, fPanelH;      /* panel pixels the digitizer reports in */
+ 	bool fDown[SWEET_TOUCH_FINGERS];
+ 	bool fEdge[SWEET_TOUCH_FINGERS];
+ 	IOFixed fX[SWEET_TOUCH_FINGERS];
+@@ -434,6 +435,17 @@ SweetHIDTouch::start(IOService *provider)
+ 	}
+ 	int native = 0;
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
++	/*
++	 * The digitizer reports panel pixels, but iOS renders into the logical
++	 * display (1125x2436 unless sweetfb_native), so the contact goes through
++	 * the same mapping the framebuffer presents with (SweetFramebuffer.cpp,
++	 * sweetfb_scale). fPanelW/fPanelH must match the panel the framebuffer
++	 * was started with; khaje defaults to 720x1650.
++	 */
++	fPanelW = 1080;
++	fPanelH = 2400;
++	PE_parse_boot_argn("sweetfb_panel_w", &fPanelW, sizeof(fPanelW));
++	PE_parse_boot_argn("sweetfb_panel_h", &fPanelH, sizeof(fPanelH));
+ 	fLogicalW = native ? 1080 : 1125;
+ 	fLogicalH = native ? 2400 : 2436;
+ 	fOffX = (fLogicalW - 1080) / 2;
+@@ -458,22 +470,60 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 	if (finger < 0 || finger >= SWEET_TOUCH_FINGERS) {
+ 		return;
+ 	}
+-	x = x < 0 ? 0 : (x > 1079 ? 1079 : x);
+-	y = y < 0 ? 0 : (y > 2399 ? 2399 : y);
+ 
+ 	IOLockLock(fLock);
+ 	bool was = fDown[finger];
+-	/* Panel pixels -> the presented 1125x2436 display (SweetFramebuffer.cpp). */
+-	IOFixed nx = (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW);
+-	IOFixed ny = (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH);
++	/*
++	 * Panel pixels -> logical display (1125x2436 by default). The
++	 * framebuffer presents the logical canvas scaled onto the panel (fit:
++	 * uniform, letterboxed; fill: uniform, cropped), so the inverse is a
++	 * uniform scale with the same letterbox offset. With no scaling
++	 * (native panel >= logical) fOffX/fOffY keep the old crop behaviour.
++	 */
++	int scaled = fPanelW < fLogicalW || fPanelH < fLogicalH;
++	int lx, ly;
++	if (scaled && fPanelW != 0 && fPanelH != 0) {
++		/* Fit: smaller ratio, centred; matching sweetfb_scale default. */
++		int64_t sx, sy, sc;
++		int64_t offx, offy, vx, vy;
++		if ((int64_t)fPanelW * fLogicalH < (int64_t)fPanelH * fLogicalW) {
++			sc = ((int64_t)fLogicalH << 16) / fPanelH;   /* width limits */
++		} else {
++			sc = ((int64_t)fLogicalW << 16) / fPanelW;
++		}
++		offx = (((int64_t)fLogicalW << 16) - (int64_t)fPanelW * sc) / 2;
++		offy = (((int64_t)fLogicalH << 16) - (int64_t)fPanelH * sc) / 2;
++		vx = (int64_t)x * sc + offx;
++		vy = (int64_t)y * sc + offy;
++		sx = vx >> 16;
++		sy = vy >> 16;
++		lx = sx < 0 ? 0 : (sx >= fLogicalW ? fLogicalW - 1 : (int)sx);
++		ly = sy < 0 ? 0 : (sy >= fLogicalH ? fLogicalH - 1 : (int)sy);
++	} else {
++		x = x < 0 ? 0 : (x > fPanelW - 1 ? fPanelW - 1 : x);
++		y = y < 0 ? 0 : (y > fPanelH - 1 ? fPanelH - 1 : y);
++		lx = x + fOffX;
++		ly = y + fOffY;
++	}
++	IOFixed nx = (IOFixed)(((int64_t)lx << 16) / fLogicalW);
++	IOFixed ny = (IOFixed)(((int64_t)ly << 16) / fLogicalH);
+ 	bool moved = down && (nx != fX[finger] || ny != fY[finger]);
+ 	if (was == down && !moved) {
+ 		IOLockUnlock(fLock);
+ 		return;
+ 	}
+ 	if (!was && down) {
+-		fEdge[finger] = x < SWEET_TOUCH_EDGE_PX || x > 1079 - SWEET_TOUCH_EDGE_PX ||
+-		    y < SWEET_TOUCH_EDGE_PX || y > 2399 - SWEET_TOUCH_EDGE_PX;
++		if (scaled) {
++			fEdge[finger] = lx < SWEET_TOUCH_EDGE_PX ||
++			    lx > fLogicalW - 1 - SWEET_TOUCH_EDGE_PX ||
++			    ly < SWEET_TOUCH_EDGE_PX ||
++			    ly > fLogicalH - 1 - SWEET_TOUCH_EDGE_PX;
++		} else {
++			fEdge[finger] = x < SWEET_TOUCH_EDGE_PX ||
++			    x > fPanelW - 1 - SWEET_TOUCH_EDGE_PX ||
++			    y < SWEET_TOUCH_EDGE_PX ||
++			    y > fPanelH - 1 - SWEET_TOUCH_EDGE_PX;
++		}
+ 	}
+ 
+ 	collection = IOHIDEvent::digitizerEvent(now, 0, kIOHIDDigitizerTransducerTypeHand, false, 0, 0, 0);

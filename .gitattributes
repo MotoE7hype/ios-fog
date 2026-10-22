@@ -1,0 +1,3 @@
+# Patch files are consumed by `git apply` in CI (Linux/macOS), which rejects
+# CRLF line endings. Keep them LF in the working tree on every platform.
+*.patch text eol=lf

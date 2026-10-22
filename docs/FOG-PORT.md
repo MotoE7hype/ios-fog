@@ -256,10 +256,13 @@ boots without the iPhone X identity.
    enable `sweettouch=1` before that; the I2C probe is meaningless on fog.
 3. Install the iOS root into `userdata` only with explicit approval and a
    verified backup. Then `build-fog-ios.sh`.
-4. Display: verify the centre-cropped iPhone X canvas is usable. A proper
-   full-screen presentation needs a `present()` scaling path (logical
-   1125x2436 -> 720x1650) and a `SweetHID` panel-size source; the current
-   `sweetfb_native=1` path hardcodes 1080x2400 and must not be used on fog.
+4. Display: patch `0100-sweet-fb-present-scale.patch` adds a resample in the
+   present path (`sweetfb_scale=0|1|2`; the default on `/fog-platform` is fit)
+   so the 1125x2436 logical canvas reaches all of the 720x1650 panel instead
+   of a centre crop. It also makes `SweetHID` map contacts through the same
+   scale using `sweetfb_panel_w/h`. Both are gated on `/fog-platform`, so
+   spes/topaz behaviour is unchanged. `sweetfb_native=1` still hardcodes
+   1080x2400 in `SweetHID` and must not be used on fog.
 
 Do not flash `boot`, `vendor_boot`, `dtbo`, `vbmeta`, `persist` or `modem` for
 bring-up. `fastboot boot` is enough.

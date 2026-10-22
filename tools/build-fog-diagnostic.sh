@@ -22,6 +22,9 @@ case $cpus in
     1|2|3|4) ;;
     *) echo "FOG_CPUS must be 1-4 (the ADT lists the four Gold cores)" >&2; exit 2 ;;
 esac
+# Panel pixels; matches the SHIM_FB_* geometry below (720x1650 on khaje).
+panel_w=${FOG_PANEL_W:-720}
+panel_h=${FOG_PANEL_H:-1650}
 name=$device-diagnostic
 kernel=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
 [ -f "$kernel" ] || { echo "Kernel missing: $1" >&2; exit 1; }
@@ -44,7 +47,7 @@ python3 tools/mkpayload.py "$kernel" "shim/out/$name.adt" "shim/out/$name.payloa
     --ramdisk shim/out/fog-init \
     --cmdline "debug=0xc serial=3 cpus=$cpus keepsyms=1 -enable_kprintf_spam -noprogress rd=md0 ufsrw=0 rootrw=0 sweetlog=0 sweettouch=0 sweetkeys=0 sweethw=0 sweetfb_stayon=1"
 # The shim console and the boot_args Video use the 720x1650 splash geometry.
-SHIM_FB_W=720 SHIM_FB_H=1650 BOOT_HEADER_VERSION=3 shim/build.sh "out/$name.payload"
+SHIM_FB_W=$panel_w SHIM_FB_H=$panel_h BOOT_HEADER_VERSION=3 shim/build.sh "out/$name.payload"
 cp shim/out/shim-boot.img "shim/out/$name.img"
 if command -v shasum >/dev/null; then
     shasum -a 256 "shim/out/$name.img" > "shim/out/$name.img.sha256"
