@@ -4,6 +4,7 @@
 #
 #   tools/build-fog-diagnostic.sh KERNEL LIVE_FDT
 #   FOG_MEMORY=0x100000000:0x40000000 tools/build-fog-diagnostic.sh KERNEL
+#   FOG_CPUS=4 ... (default 1; the ADT declares the four Gold cores)
 #
 # The second form is for CI, where the live FDT cannot be committed (it holds
 # the serial): FOG_MEMORY must be the range select_memory() picked on the
@@ -16,6 +17,11 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
     exit 2
 fi
 device=${FOG_DEVICE:-fog}
+cpus=${FOG_CPUS:-1}
+case $cpus in
+    1|2|3|4) ;;
+    *) echo "FOG_CPUS must be 1-4 (the ADT lists the four Gold cores)" >&2; exit 2 ;;
+esac
 name=$device-diagnostic
 kernel=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
 [ -f "$kernel" ] || { echo "Kernel missing: $1" >&2; exit 1; }
@@ -36,7 +42,7 @@ clang -target arm64-apple-ios16.0 -mcpu=cortex-a53 -c tools/sweet-init.S -o shim
 python3 tools/mkinit.py shim/out/fog-init.o shim/out/fog-init
 python3 tools/mkpayload.py "$kernel" "shim/out/$name.adt" "shim/out/$name.payload" \
     --ramdisk shim/out/fog-init \
-    --cmdline "debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=md0 ufsrw=0 rootrw=0 sweetlog=0 sweettouch=0 sweetkeys=0 sweethw=0 sweetfb_stayon=1"
+    --cmdline "debug=0xc serial=3 cpus=$cpus keepsyms=1 -enable_kprintf_spam -noprogress rd=md0 ufsrw=0 rootrw=0 sweetlog=0 sweettouch=0 sweetkeys=0 sweethw=0 sweetfb_stayon=1"
 # The shim console and the boot_args Video use the 720x1650 splash geometry.
 SHIM_FB_W=720 SHIM_FB_H=1650 BOOT_HEADER_VERSION=3 shim/build.sh "out/$name.payload"
 cp shim/out/shim-boot.img "shim/out/$name.img"

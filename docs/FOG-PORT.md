@@ -221,6 +221,10 @@ only valid on the unit it was measured on.
 Outputs `shim/out/<device>-diagnostic.img` + `.sha256`, using the 720x1650
 shim console. Nothing is sent to the phone.
 
+`FOG_CPUS=N` (1-4, default 1) sets the `cpus=N` boot arg. The ADT already
+lists the four Gold cores (MPIDR `0x100`-`0x103`, three `stopped`), so N=4 only
+changes the kernel side; the silver cluster stays parked either way.
+
 For the full UI (only after a diagnostic success and a userdata iOS root):
 
 ```sh
