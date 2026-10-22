@@ -16,15 +16,20 @@ explicit approval to erase Android data. Boot images are still loaded with
 `fastboot boot`; bootloaders, recovery, modem and persist are preserved.
 Apple filesystem images and device-specific dumps are not distributed here.
 
-## Redmi 10C (`fog`) — scaffolding only
+## Redmi 10C (`fog`) — verified hardware, no boot yet
 
 Branch `fog` adds a device profile for the Redmi 10C (SM6225, 4 GB, 720x1650).
-It has **not booted on the handset yet**, and touch/display are not ported:
-fog uses an SPI Novatek/FocalTech controller, not spes' I²C part. The branch
-contains `--device fog` ADT generation, a shared 4 GB-capable khaje memory
-selector, 720x1650 shim console overrides, RAM-only/full image builders and a
-read-only partition backup script. Start with
-[docs/FOG-PORT.md](docs/FOG-PORT.md); tests use `python3 -m unittest tests.test_fog`.
+The hardware facts are now measured on a live unit (`rain_global` / 220333QNY,
+the Redmi 10 Power; fog ROMs are rain ROMs, so `--device rain` is also
+accepted): 720x1650@60 BOE panel, Novatek `NVT-ts` touch on QUPv3 SE0 SPI
+(`spi0.0`), 1 GiB of usable RAM above 4 GiB, splash at `0x5c000000`, A/B
+partitions without a `recovery` split. It has **not booted yet**, and
+touch/display are not ported: fog's touch is SPI, not spes' I²C part. The
+branch contains `--device fog|rain` ADT generation, a shared 4 GB-capable khaje
+memory selector, 720x1650 shim console overrides, RAM-only/full image
+builders, a read-only live-data probe and a slot-aware partition backup
+script. Start with [docs/FOG-PORT.md](docs/FOG-PORT.md); tests use
+`python3 -m unittest tests.test_fog`.
 
 ## Changes
 

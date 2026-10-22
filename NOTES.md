@@ -1,12 +1,30 @@
-# Redmi 10C (fog) port scaffolding — 2026-10-22
+# Redmi 10C (fog) port — scaffolding + verified hardware, 2026-10-22
 
 - **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
-  (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). Nothing has
-  been booted on fog yet; every hardware claim below is from source, not the
-  handset.
+  (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). No fog image
+  has been booted yet.
+- **Live handset verified 2026-10-22**: it reports `rain_global`, model
+  220333QNY (Redmi 10 Power), Android 15 / HyperOS 2.0.9.0.VJXCNXM,
+  `verifiedbootstate=orange`, Magisk root, slot `_a`. fog ROMs are rain ROMs,
+  hence `--device rain` is accepted and builds the same layout with a
+  `xiaomi,rain` identity. Probe output: `probe/fog-live/` (git-ignored).
+  - DRAM: 1 GiB→5 GiB in three banks with a 35 MiB hole; only 1 GiB
+    (`0x100000000`–`0x140000000`) is above 4 GiB, no reservations in it.
+    `mkadt --device rain --memory-dtb probe/fog-live/fog-live.dtb` selects
+    `dram-base 0x100000000`, `dram-size 0x40000000`.
+  - Splash `cont_splash_region@5c000000` size `0xf00000` confirmed.
+  - Panel `720x1650x60` DSI video, BOE nt36525b,
+    `lcmtype=dsi_panel_c3q_35_02_0a_fhdp_video`; backlight `panel0-backlight`
+    max 2047.
+  - Touch is `spi0.0` bound to `NVT-ts` on QUPv3 SE0 `spi@4a80000`; live FDT
+    confirms Novatek `NVT-ts-spi`, reset GPIO 86, IRQ GPIO 80, 9.6 MHz,
+    10 fingers, `display-coords 0 0 719 1649`.
+  - Partitions are A/B (`boot_a/b`, `dtbo_a/b`, `modem_a/b`, ...), no
+    `recovery`, plus `super`/`splash`; active `dtbo_a` is 24 MB.
 - **Device family**: `fog` = Redmi 10C, `rain` = Redmi 10 Power, `wind` =
   Redmi 10 variant; all khaje/SM6225, Adreno 610, 4x Gold (A73) @2.4 GHz.
-  `fog`/`rain` share the board. The profile is intended to cover all three.
+  `fog`/`rain` share the board. `wind` stays rejected until its panel is
+  confirmed.
 - **Touch is SPI, not spes I2C**: stock `khaje-idp.dtsi` has the digitizer on
   `qupv3_se0_spi` (`novatek@0`, compatibles `novatek,NVT-ts-spi` and
   `focaltech,fts`), reset GPIO 86, IRQ GPIO 80, 720x1650 display coords.
@@ -14,54 +32,58 @@
   `novatek@62` nodes. `sweet_touch.c` (QUP SE2 I2C, clamp 1080x2400) cannot
   drive it. Keep `sweettouch=0` on fog until a QUPv3 SE0 SPI path exists.
 - **Changes on branch `fog`**:
-  - `tools/mkadt.py`: device table (`topaz`, `spes`, `fog`). `fog` = identity
-    `xiaomi,fog`, `/fog-platform`, 4 Gold cores @2.4 GHz, splash
-    `0x5c000000` 720x1650 stride 2880, synthetic chip ID, iPhone X canvas
-    1125x2436 @3x (centre crop until a scale path exists). spes/topaz output
-    is unchanged.
+  - `tools/mkadt.py`: device table (`topaz`, `spes`, `fog`, `rain`). `fog` and
+    `rain` share `_khaje_720()`: identity `xiaomi,<device>`, `/fog-platform`,
+    4 Gold cores @2.4 GHz, splash `0x5c000000` 720x1650 stride 2880, synthetic
+    chip ID, iPhone X canvas 1125x2436 @3x (centre crop until a scale path
+    exists). spes/topaz output is unchanged.
   - `tools/spes_memory.py`: shared khaje selector, accepts `qcom,khaje` and
     `qcom,sm6225`, named `MIN_RANGE`/`ALIGN`/`LOW_LIMIT`/`HIGH_LIMIT`, clearer
     4 GB error. Still only accepts RAM above 4 GiB (all khaje XPU carve-outs
-    are below). A 4 GB phone is expected to have ~2 GiB above 4 GiB.
+    are below). Verified map leaves 1 GiB there, not the 2 GiB once guessed.
   - `shim/build.sh`, `shim/console.h`, `shim/mmu.h`: `SHIM_FB_BASE`,
     `SHIM_FB_W`, `SHIM_FB_H` overrides; defaults 1080x2400/`0x5c000000` keep
     existing images identical. Boot shim console and `boot_args` Video now
     follow the panel.
   - New `tools/build-fog-diagnostic.sh` (RAM-only `rd=md0`, 720x1650 shim),
     `tools/build-fog-ios.sh` (UFS root, `cpus=1`, touch/keys/USB off),
-    `tools/backup-fog.sh` (read-only partition + /sdcard backup),
+    `tools/backup-fog.sh` (slot-aware read-only partition + /sdcard backup),
     `tools/fog-probe.sh` (read-only one-shot capture of live FDT, dtbo,
     meminfo/iomem/cmdline, dmesg, SPI/DRM/backlight sysfs; `probe/` ignored).
   - New `tests/test_fog.py` (fog ADT, 4 GB map, spes/topaz preservation);
     `docs/FOG-PORT.md`; README fog section; CI push trigger for branch `fog`.
 - **Checks run on Windows host (2026-10-22)**:
-  `python -m unittest tests.test_fog tests.test_spes` = 20 tests OK.
+  `python -m unittest tests.test_fog tests.test_spes` = 21 tests OK.
   Full discovery has one pre-existing Windows-only error in
   `test_ios_root` (`os.chown` absent), unrelated to this work.
   `git apply`/kernel build was not run here; no fog kernel patch was added.
   `bash -n` (Git for Windows bash, `C:\Program Files\Git\bin\bash.exe`) passes
   on `tools/fog-probe.sh`, `tools/backup-fog.sh`, both `build-fog-*.sh` and
-  `shim/build.sh`; the scripts have not been executed (no phone/adb here).
+  `shim/build.sh`.
+  `tools/fog-probe.sh` and `tools/backup-fog.sh` were executed on the live
+  rain handset via `C:\Program Files\Software Fix\adb.exe` (adb is not on
+  PATH). The backup was tested with `FOG_PARTITIONS="misc vbmeta modemst1
+  persist" FOG_WITH_SDCARD=0`; its output was deleted afterwards. No full
+  backup has been taken yet.
 - **Not done / needs the handset**:
-  1. Backup: run `tools/backup-fog.sh` before any flash or userdata iOS
-     install (not needed for `fastboot boot` RAM tests).
-  2. Capture the live data with `tools/fog-probe.sh` (writes
-     `probe/fog-*/fog-live.dtb`, `dtbo.img`, dmesg and sysfs copies), then
-     `python3 tools/mkadt.py shim/out/fog.adt --device fog --memory-dtb
-     probe/fog-*/fog-live.dtb`. This proves the upper RAM bank and the splash
-     base.
-  3. Run `tools/build-fog-diagnostic.sh` and `fastboot boot` it. Expect PID 1
-     fbcon text on 720x1650. If the screen is black, check splash base/panel
-     geometry (the phone still runs Android; reboot recovers).
-  4. Port SPI touch (QUPv3 SE0, reset 86, IRQ 80, regulator AVDD), add a fog
-     coordinate clamp, gate it on `/fog-platform`.
-  5. Display scale: current GUI is a centre crop of 1125x2436 on 720x1650.
+  1. Full backup: run `tools/backup-fog.sh` before any flash or userdata iOS
+     install (not needed for `fastboot boot` RAM tests). Watch for exit 3.
+  2. Run `tools/build-fog-diagnostic.sh` on macOS/CI with
+     `probe/fog-live/fog-live.dtb` (set `FOG_DEVICE=rain`) and `fastboot boot`
+     the image. Expect PID 1 fbcon text on 720x1650. If the screen is black,
+     check splash base/panel geometry (reboot recovers Android).
+  3. Port SPI touch (QUPv3 SE0 `spi@4a80000`, reset 86, IRQ 80, 9.6 MHz,
+     Novatek `swrst-n8`/fast-read), add a fog coordinate clamp, gate it on
+     `/fog-platform`.
+  4. Display scale: current GUI is a centre crop of 1125x2436 on 720x1650.
      `sweetfb_native=1` hardcodes 1080x2400 in SweetHID and does not fit fog;
      do not use it. Needs a present() scale path + HID panel-size source.
-  6. Verify keys/PMIC, UFS, GPU, Wi-Fi that were validated on spes; keep
-     `sweetkeys=0 sweethw=0` until each is tested.
-- **Images**: none built or run for fog yet. No commit/push existed when this
-  note was written (see the next commit on `fog`).
+  5. Verify keys/PMIC (`fpc` fingerprint, not needed for boot), UFS, GPU,
+     Wi-Fi that were validated on spes; keep `sweetkeys=0 sweethw=0` until
+     each is tested.
+- **Images**: none built or run for fog yet (no macOS/Clang here). The `fog`
+  branch is local only; the user is not the AdyaGMD account holder, so it
+  cannot be pushed to that fork without their credentials.
 
 # GPU Stage 5 ARM SMMUv2 SMR Invalidation Before S2CR Routing Update — 2026-10-22
 

@@ -45,6 +45,18 @@ QEMU_VTIMER_INTID = 27
 #   platform: optional kernel platform marker node (SecureDTLookupEntry)
 #   fb:       (splash base, width, height); stride is width * 4
 #   canvas:   IOMobileFramebuffer canvas reported to iOS (iPhone X logical size)
+#
+# The 720x1650 khaje board ships as Redmi 10C (fog) and Redmi 10 Power (rain,
+# model 220333QNY, verified live); both entries share one layout and the
+# /fog-platform marker so a single kernel patch serves them. "wind" stays out
+# until its panel is confirmed on hardware.
+def _khaje_720():
+    return dict(clock=2400000000, chip_id=0x464f470000000001,
+                platform='fog-platform', live_memory=True,
+                fb=(0x5c000000, 720, 1650),
+                canvas=(1125, 2436), display_scale=3)
+
+
 DEVICES = {
     'topaz': dict(clock=2803200000, chip_id=SWEET_ECID, platform=None,
                   live_memory=False, fb=(0x5c000000, 1080, 2400),
@@ -53,13 +65,10 @@ DEVICES = {
                  platform='spes-platform', live_memory=True,
                  fb=(0x5c000000, 1080, 2400),
                  canvas=(1125, 2436), display_scale=3),
-    # Redmi 10C (fog), Redmi 10 Power (rain): 720x1650 DSI panel. The iPhone X
-    # logical canvas is kept so UIKit has a supported screen class; until the
-    # present() scale path exists the panel shows the centre crop.
-    'fog': dict(clock=2400000000, chip_id=0x464f470000000001,
-                platform='fog-platform', live_memory=True,
-                fb=(0x5c000000, 720, 1650),
-                canvas=(1125, 2436), display_scale=3),
+    # iPhone X logical canvas is kept so UIKit has a supported screen class;
+    # until the present() scale path exists the panel shows the centre crop.
+    'fog': _khaje_720(),
+    'rain': _khaje_720(),
 }
 
 # The iOS userland is the iPhone X (iPhone10,3 / D22AP) IPSW. MobileGestalt

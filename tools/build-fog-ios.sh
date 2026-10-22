@@ -3,16 +3,17 @@
 # Requires an iOS userdata root already present on the phone; never flashes.
 set -euo pipefail
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-    echo "usage: $0 KERNEL LIVE_FDT [OUTPUT_NAME]" >&2
+    echo "usage: $0 KERNEL LIVE_FDT [OUTPUT_NAME]   (FOG_DEVICE=fog|rain, default fog)" >&2
     exit 2
 fi
-name=${3:-fog-ios}
+device=${FOG_DEVICE:-fog}
+name=${3:-$device-ios}
 kernel=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
 fdt=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")
 cd "$(dirname "$0")/.."
 [[ -f "$kernel" && -f "$fdt" ]] || { echo 'Kernel or live FDT missing' >&2; exit 1; }
 mkdir -p shim/out
-python3 tools/mkadt.py "shim/out/$name.adt" --device fog --memory-dtb "$fdt"
+python3 tools/mkadt.py "shim/out/$name.adt" --device "$device" --memory-dtb "$fdt"
 # First bring-up uses one Gold CPU. Touch is not ported to fog yet (SPI
 # Novatek/FocalTech, not spes' I2C part), so it stays off until the diagnostic
 # boot confirms the display and the input controller.

@@ -29,9 +29,14 @@ def fdt(banks, reservations=(), compatible=b'qcom,khaje\0'):
                        len(names), len(body)) + reserve + body + names
 
 
-# Redmi 10C (fog) is a 4 GB device: 2 GiB below and 2 GiB above 4 GiB.
-FOG_BANKS = [(0x80000000, 0x80000000), (0x100000000, 0x80000000)]
-FOG_RESERVED = [(0x80000000, 0x8000000), (0x140000000, 0x10000000)]
+# Verified on a live Redmi 10 Power (rain, SM6225, 4 GB) 2026-10-22: DRAM
+# starts at 1 GiB, three banks with a ~35 MiB hole, ending at 5 GiB. Only the
+# top 1 GiB is above 4 GiB, and no reservation sits there.
+FOG_BANKS = [(0x40000000, 0x3dd00000), (0x80000000, 0x40000000),
+             (0xc0000000, 0x80000000)]
+FOG_RESERVED = [(0x45700000, 0x600000), (0x4ab00000, 0x6900000),
+                (0x5c000000, 0xf00000), (0x5cf00000, 0x100000),
+                (0x5d000000, 0x400000)]
 
 
 class FogMemoryTests(unittest.TestCase):
@@ -40,11 +45,11 @@ class FogMemoryTests(unittest.TestCase):
                          (0x100000000, 0x40000000))
 
     def test_upper_bank_without_reservations(self):
-        self.assertEqual(select_memory(fdt(FOG_BANKS)), (0x100000000, 0x80000000))
+        self.assertEqual(select_memory(fdt(FOG_BANKS)), (0x100000000, 0x40000000))
 
     def test_sm6225_compatible_accepted(self):
         self.assertEqual(select_memory(fdt(FOG_BANKS, compatible=b'qcom,sm6225\0')),
-                         (0x100000000, 0x80000000))
+                         (0x100000000, 0x40000000))
 
     def test_three_gigabyte_map_still_selects_upper_bank(self):
         banks = [(0x80000000, 0xc0000000), (0x100000000, 0x40000000)]
@@ -112,9 +117,22 @@ class FogAdtTests(unittest.TestCase):
         self.assertNotIn('fog-platform', children)
         self.assertEqual(struct.unpack('<I', children['sweet-fbcon'].prop('width'))[0], 1080)
 
+    def test_rain_alias_shares_board(self):
+        # The verified handset identifies as rain (220333QNY); it must build
+        # the same 720x1650 / /fog-platform layout with its own identity.
+        root, _ = adt.parse(adt.serialize(mkadt.build(device='rain',
+                                                     memory=(0x100000000, 0x40000000))))
+        children = {c.name: c for c in root.children}
+        self.assertIn('fog-platform', children)
+        self.assertIn(b'xiaomi,rain\0', root.prop('compatible'))
+        fb = children['sweet-fbcon']
+        self.assertEqual(struct.unpack('<QQ', fb.prop('reg')), (0x5c000000, 0xf00000))
+        self.assertEqual(struct.unpack('<I', fb.prop('width'))[0], 720)
+        self.assertEqual(struct.unpack('<I', fb.prop('height'))[0], 1650)
+
     def test_unknown_device_rejected(self):
         with self.assertRaises(ValueError):
-            mkadt.build(device='rain')
+            mkadt.build(device='wind')
 
 
 if __name__ == '__main__':
