@@ -1,19 +1,36 @@
 #!/bin/bash
 # Host-only full iOS boot image builder for Xiaomi Redmi 10C (fog).
 # Requires an iOS userdata root already present on the phone; never flashes.
+#
+#   tools/build-fog-ios.sh KERNEL LIVE_FDT [OUTPUT_NAME]
+#   FOG_MEMORY=0x100000000:0x40000000 tools/build-fog-ios.sh KERNEL [OUTPUT_NAME]
+#
+# The second form is for hosts without the live FDT (it holds the serial), for
+# example a Mac that only has the IPSW and the kernel artifact.
 set -euo pipefail
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-    echo "usage: $0 KERNEL LIVE_FDT [OUTPUT_NAME]   (FOG_DEVICE=fog|rain|wind, default fog)" >&2
+if [[ $# -lt 1 || $# -gt 3 ]]; then
+    echo "usage: $0 KERNEL [LIVE_FDT|-] [OUTPUT_NAME]" >&2
+    echo "   or: FOG_MEMORY=BASE:SIZE $0 KERNEL [OUTPUT_NAME]" >&2
+    echo "  (FOG_DEVICE=fog|rain|wind, default fog)" >&2
     exit 2
 fi
 device=${FOG_DEVICE:-fog}
 name=${3:-$device-ios}
 kernel=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
-fdt=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")
+[ -f "$kernel" ] || { echo "Kernel missing: $1" >&2; exit 1; }
+if [ -n "${2:-}" ] && [ "$2" != - ]; then
+    fdt=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$2")
+    [ -f "$fdt" ] || { echo "live FDT missing: $2" >&2; exit 1; }
+    memory_args="--memory-dtb $fdt"
+elif [ -n "${FOG_MEMORY:-}" ]; then
+    memory_args="--memory-range $FOG_MEMORY"
+else
+    echo 'Pass LIVE_FDT, or set FOG_MEMORY=BASE:SIZE from the verified live map' >&2
+    exit 2
+fi
 cd "$(dirname "$0")/.."
-[[ -f "$kernel" && -f "$fdt" ]] || { echo 'Kernel or live FDT missing' >&2; exit 1; }
 mkdir -p shim/out
-python3 tools/mkadt.py "shim/out/$name.adt" --device "$device" --memory-dtb "$fdt"
+python3 tools/mkadt.py "shim/out/$name.adt" --device "$device" $memory_args
 # First bring-up uses one Gold CPU. Touch is not ported to fog yet (SPI
 # Novatek/FocalTech, not spes' I2C part), so it stays off until the diagnostic
 # boot confirms the display and the input controller.

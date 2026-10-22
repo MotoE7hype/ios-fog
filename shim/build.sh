@@ -20,6 +20,13 @@ FB_W=${SHIM_FB_W:-1080}
 FB_H=${SHIM_FB_H:-2400}
 CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra -DFB_BASE=${FB_BASE}UL -DFB_PHYS=${FB_BASE}UL -DFB_W=${FB_W} -DFB_H=${FB_H}"
 mkdir -p out
+# macOS has no truncate(1); emulate the two `truncate -s SIZE FILE` uses below.
+if ! command -v truncate >/dev/null 2>&1; then
+	truncate() {
+		[ "$1" = -s ] || { echo "unsupported truncate args: $*" >&2; return 1; }
+		python3 -c 'import os,sys; os.truncate(sys.argv[2], int(sys.argv[1], 0))' "$2" "$3"
+	}
+fi
 for f in start.S shim.c console.c mmu.c fdt.c loader.c ufs.c; do
 	$CC $CFLAGS -c $f -o out/${f%.*}.o
 done

@@ -224,9 +224,22 @@ shim console. Nothing is sent to the phone.
 For the full UI (only after a diagnostic success and a userdata iOS root):
 
 ```sh
+# local build (Linux/macOS), live FDT path
 CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/tools/vendor/mkbootimg/mkbootimg.py" \
   FOG_DEVICE=rain tools/build-fog-ios.sh xnu/out/kernel.development.sweet probe/fog-live/fog-live.dtb
+
+# without the live FDT (e.g. macOS with the IPSW and kernel artifact only)
+CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/tools/vendor/mkbootimg/mkbootimg.py" \
+  FOG_DEVICE=rain FOG_MEMORY=0x100000000:0x40000000 \
+  tools/build-fog-ios.sh xnu/out/kernel.development.sweet
 ```
+
+`FOG_MEMORY` is the same verified range the CI diagnostic uses. The Mac
+toolchain is `brew install messense/macos-cross-toolchains/aarch64-unknown-linux-gnu`
+(`CROSS_COMPILE=aarch64-unknown-linux-gnu-`); `shim/build.sh` emulates
+`truncate` when the host has none. `/product` comes from
+`research/ipsw-x/d22ap.adt` when present; otherwise `mkadt` warns and the image
+boots without the iPhone X identity.
 
 ## Test order (each step needs a user decision)
 
