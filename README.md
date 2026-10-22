@@ -1,12 +1,23 @@
-# ios-spes — Redmi Note 11 bring-up
+# ios-fog — Redmi 10C / 10 Power bring-up
 
-Experimental source port of [MakrSas/ios-topaz](https://github.com/MakrSas/ios-topaz/tree/topaz)
-to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
-physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
-available to this kernel.
+Fork of [AdyaGMD/ios-spes](https://github.com/AdyaGMD/ios-spes) for the Redmi 10
+family: **`fog`** (Redmi 10C), **`rain`** (Redmi 10 Power) and **`wind`** all
+fall under the fog base (SM6225 / Snapdragon 680, 720x1650, 4 GB). The work
+lives on the `fog` branch, which is this fork's default branch; `main`, `spes`
+and `topaz` are kept from upstream.
 
-**Status (2026-10-21): iOS 16.7.16 boots to its interface on spes.**
-The user confirmed the UI, touchscreen and volume buttons on the test handset.
+Upstream port, for reference: [MakrSas/ios-topaz](https://github.com/MakrSas/ios-topaz/tree/topaz)
+to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**, 6 GB physical RAM.
+The Android “+2 GB” expansion is not RAM available to this kernel.
+
+**This fork (`fog`): hardware verified, not booted yet.** The test handset
+reports `rain_global` (model 220333QNY) with Android 15 / HyperOS 2; the live
+FDT gives 720x1650, Novatek SPI touch and 1 GiB of RAM above 4 GiB. See
+[docs/FOG-PORT.md](docs/FOG-PORT.md) for the measured facts and the exact
+next steps.
+
+**Upstream status (2026-10-21): iOS 16.7.16 boots to its interface on spes.**
+The UI, touchscreen and volume buttons were confirmed on the spes handset.
 Startup and interaction are very slow. The current build uses one Gold CPU;
 GPU acceleration and Wi-Fi are not working. Additional CPUs and the power
 button remain unverified. This is an experimental port, not a daily-use ROM.

@@ -3,7 +3,7 @@
 # Never flashes a phone: boot it with `fastboot boot`.
 set -euo pipefail
 if [ "$#" -ne 2 ]; then
-    echo "usage: $0 KERNEL LIVE_FDT   (FOG_DEVICE=fog|rain, default fog)" >&2
+    echo "usage: $0 KERNEL LIVE_FDT   (FOG_DEVICE=fog|rain|wind, default fog)" >&2
     echo "  (fog hardware probes are not implemented yet; touch is SPI, see docs/FOG-PORT.md)" >&2
     exit 2
 fi

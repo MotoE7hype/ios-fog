@@ -6,9 +6,11 @@ unchanged.
 
 Target: Redmi 10C `fog` (SM6225 / Snapdragon 680 "khaje", Adreno 610, 4 GB RAM,
 720x1650 panel, HyperOS 2, unlocked bootloader, root ADB). `rain` (Redmi 10
-Power) and `wind` (Redmi 10) are the same khaje board family. The handset used
-for bring-up reports **`rain_global`, model 220333QNY**, so `--device rain`
-builds the identical layout with a `xiaomi,rain` identity.
+Power) and `wind` (Redmi 10) fall under the fog base; all three share the same
+profile and `/fog-platform` marker. This repository is the `ios-fog` fork of
+`AdyaGMD/ios-spes`, with `fog` as its default branch. The handset used for
+bring-up reports **`rain_global`, model 220333QNY**, so `--device rain` is the
+matching identity for this unit.
 
 ## Verified on the handset (2026-10-22)
 
@@ -31,9 +33,12 @@ The live FDT is 596 KB; the active `dtbo_a` is 24 MB. Neither is committed
 (the FDT carries the serial). Probe output lives in `probe/` (git-ignored).
 
 The handset runs a **rain** firmware image: Redmi 10C (`fog`) ROMs are rain
-ROMs, so `--device rain` is the accurate identity for this unit. It builds the
-same layout with `xiaomi,rain` and `rain-shim` identity strings; the
-`/fog-platform` marker is shared, so one kernel patch covers both.
+ROMs, and fog/rain/wind are one fog-base family, so `--device rain` is the
+accurate identity for this unit. It builds the same layout with `xiaomi,rain`
+and `rain-shim` identity strings; the `/fog-platform` marker is shared, so one
+kernel patch covers the family. `wind` is included on the same assumption;
+every panel node in the verified live FDT is 720x1650, but a wind unit should
+still be probed before booting.
 
 ## Why this is not a copy of `spes`
 
@@ -76,9 +81,10 @@ speak the Novatek SPI protocol (`swrst-n8` / fast-read registers above).
 
 ## What is in this branch
 
-- `tools/mkadt.py --device fog` (or `--device rain` for this handset's image):
-  - identity `xiaomi,fog`/`xiaomi,rain` (+ `xiaomi,sweet`, `qcom,khaje`),
-    synthetic chip ID, four Gold cores at 2.4 GHz, `/fog-platform` marker;
+- `tools/mkadt.py --device fog` (also `rain`, `wind` for this unit's image):
+  - identity `xiaomi,fog`/`xiaomi,rain`/`xiaomi,wind` (+ `xiaomi,sweet`,
+    `qcom,khaje`), synthetic chip ID, four Gold cores at 2.4 GHz,
+    `/fog-platform` marker;
   - framebuffer `0x5c000000`, 720x1650, stride 2880;
   - still reports the iPhone X canvas (1125x2436 @3x) so UIKit has a supported
     screen class. Until a scaling path exists, the panel shows the centre crop

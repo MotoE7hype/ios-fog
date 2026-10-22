@@ -3,7 +3,7 @@
 # Requires an iOS userdata root already present on the phone; never flashes.
 set -euo pipefail
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-    echo "usage: $0 KERNEL LIVE_FDT [OUTPUT_NAME]   (FOG_DEVICE=fog|rain, default fog)" >&2
+    echo "usage: $0 KERNEL LIVE_FDT [OUTPUT_NAME]   (FOG_DEVICE=fog|rain|wind, default fog)" >&2
     exit 2
 fi
 device=${FOG_DEVICE:-fog}

@@ -117,22 +117,25 @@ class FogAdtTests(unittest.TestCase):
         self.assertNotIn('fog-platform', children)
         self.assertEqual(struct.unpack('<I', children['sweet-fbcon'].prop('width'))[0], 1080)
 
-    def test_rain_alias_shares_board(self):
-        # The verified handset identifies as rain (220333QNY); it must build
-        # the same 720x1650 / /fog-platform layout with its own identity.
-        root, _ = adt.parse(adt.serialize(mkadt.build(device='rain',
-                                                     memory=(0x100000000, 0x40000000))))
-        children = {c.name: c for c in root.children}
-        self.assertIn('fog-platform', children)
-        self.assertIn(b'xiaomi,rain\0', root.prop('compatible'))
-        fb = children['sweet-fbcon']
-        self.assertEqual(struct.unpack('<QQ', fb.prop('reg')), (0x5c000000, 0xf00000))
-        self.assertEqual(struct.unpack('<I', fb.prop('width'))[0], 720)
-        self.assertEqual(struct.unpack('<I', fb.prop('height'))[0], 1650)
+    def test_rain_and_wind_aliases_share_board(self):
+        # fog is the base codename: the verified handset identifies as rain
+        # (220333QNY) and wind is the same family; all build the same
+        # 720x1650 / /fog-platform layout with their own identity.
+        for board in ('rain', 'wind'):
+            with self.subTest(board=board):
+                root, _ = adt.parse(adt.serialize(mkadt.build(
+                    device=board, memory=(0x100000000, 0x40000000))))
+                children = {c.name: c for c in root.children}
+                self.assertIn('fog-platform', children)
+                self.assertIn(('xiaomi,' + board + '\0').encode(), root.prop('compatible'))
+                fb = children['sweet-fbcon']
+                self.assertEqual(struct.unpack('<QQ', fb.prop('reg')), (0x5c000000, 0xf00000))
+                self.assertEqual(struct.unpack('<I', fb.prop('width'))[0], 720)
+                self.assertEqual(struct.unpack('<I', fb.prop('height'))[0], 1650)
 
     def test_unknown_device_rejected(self):
         with self.assertRaises(ValueError):
-            mkadt.build(device='wind')
+            mkadt.build(device='cancun')
 
 
 if __name__ == '__main__':

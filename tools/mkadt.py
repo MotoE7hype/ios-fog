@@ -47,9 +47,10 @@ QEMU_VTIMER_INTID = 27
 #   canvas:   IOMobileFramebuffer canvas reported to iOS (iPhone X logical size)
 #
 # The 720x1650 khaje board ships as Redmi 10C (fog) and Redmi 10 Power (rain,
-# model 220333QNY, verified live); both entries share one layout and the
-# /fog-platform marker so a single kernel patch serves them. "wind" stays out
-# until its panel is confirmed on hardware.
+# model 220333QNY, verified live); all three Redmi 10 variants (fog, rain,
+# wind) fall under the fog base and share the /fog-platform marker, so one
+# kernel patch serves them. All panel nodes in the verified live FDT are
+# 720x1650; wind's panel is assumed identical until a wind unit is probed.
 def _khaje_720():
     return dict(clock=2400000000, chip_id=0x464f470000000001,
                 platform='fog-platform', live_memory=True,
@@ -69,6 +70,7 @@ DEVICES = {
     # until the present() scale path exists the panel shows the centre crop.
     'fog': _khaje_720(),
     'rain': _khaje_720(),
+    'wind': _khaje_720(),
 }
 
 # The iOS userland is the iPhone X (iPhone10,3 / D22AP) IPSW. MobileGestalt

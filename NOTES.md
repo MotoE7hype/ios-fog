@@ -1,5 +1,9 @@
-# Redmi 10C (fog) port — scaffolding + verified hardware, 2026-10-22
+# ios-fog (fog/rain/wind) port — scaffolding + verified hardware, 2026-10-22
 
+- **Repo**: `MotoE7hype/ios-fog`, a fork of `AdyaGMD/ios-spes`; `fog` is the
+  default branch. Locally it is `C:\Users\boris\Documents\Predvolený projekt\
+  ios-fog` (renamed from `src`), `origin` = the fork, `upstream` = AdyaGMD.
+  Pushed `fog` at `5c6614d`; later commits in this note are pushed too.
 - **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
   (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). No fog image
   has been booted yet.
@@ -22,9 +26,10 @@
   - Partitions are A/B (`boot_a/b`, `dtbo_a/b`, `modem_a/b`, ...), no
     `recovery`, plus `super`/`splash`; active `dtbo_a` is 24 MB.
 - **Device family**: `fog` = Redmi 10C, `rain` = Redmi 10 Power, `wind` =
-  Redmi 10 variant; all khaje/SM6225, Adreno 610, 4x Gold (A73) @2.4 GHz.
-  `fog`/`rain` share the board. `wind` stays rejected until its panel is
-  confirmed.
+  Redmi 10 variant; all fall under the fog base and are khaje/SM6225,
+  Adreno 610, 4x Gold (A73) @2.4 GHz. `--device fog|rain|wind` builds the same
+  layout with the respective identity; all three panel nodes in the verified
+  live FDT are 720x1650 (wind itself is still unprobed).
 - **Touch is SPI, not spes I2C**: stock `khaje-idp.dtsi` has the digitizer on
   `qupv3_se0_spi` (`novatek@0`, compatibles `novatek,NVT-ts-spi` and
   `focaltech,fts`), reset GPIO 86, IRQ GPIO 80, 720x1650 display coords.
@@ -32,8 +37,8 @@
   `novatek@62` nodes. `sweet_touch.c` (QUP SE2 I2C, clamp 1080x2400) cannot
   drive it. Keep `sweettouch=0` on fog until a QUPv3 SE0 SPI path exists.
 - **Changes on branch `fog`**:
-  - `tools/mkadt.py`: device table (`topaz`, `spes`, `fog`, `rain`). `fog` and
-    `rain` share `_khaje_720()`: identity `xiaomi,<device>`, `/fog-platform`,
+  - `tools/mkadt.py`: device table (`topaz`, `spes`, `fog`, `rain`, `wind`).
+    `fog`, `rain` and `wind` share `_khaje_720()`: identity `xiaomi,<device>`, `/fog-platform`,
     4 Gold cores @2.4 GHz, splash `0x5c000000` 720x1650 stride 2880, synthetic
     chip ID, iPhone X canvas 1125x2436 @3x (centre crop until a scale path
     exists). spes/topaz output is unchanged.
@@ -81,9 +86,8 @@
   5. Verify keys/PMIC (`fpc` fingerprint, not needed for boot), UFS, GPU,
      Wi-Fi that were validated on spes; keep `sweetkeys=0 sweethw=0` until
      each is tested.
-- **Images**: none built or run for fog yet (no macOS/Clang here). The `fog`
-  branch is local only; the user is not the AdyaGMD account holder, so it
-  cannot be pushed to that fork without their credentials.
+- **Images**: none built or run for fog yet (no macOS/Clang here). `fog` is
+  pushed to `origin` (`MotoE7hype/ios-fog`); `upstream` is `AdyaGMD/ios-spes`.
 
 # GPU Stage 5 ARM SMMUv2 SMR Invalidation Before S2CR Routing Update — 2026-10-22
 
