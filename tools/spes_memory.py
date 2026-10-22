@@ -1,9 +1,18 @@
 """Read a live khaje FDT and select contiguous RAM above 4 GiB for XNU.
 
-Never infer physical RAM addresses from the advertised RAM capacity. Qualcomm
-ABL fills /memory; the placeholder in stock vendor_boot is deliberately rejected.
+Shared by the spes and fog ports. Never infer physical RAM addresses from the
+advertised RAM capacity. Qualcomm ABL fills /memory; the placeholder in stock
+vendor_boot is deliberately rejected.
 """
 import struct
+
+# XNU's kernel, ADT and boot_args are placed at dram-base, so the range must
+# be large enough for the kernel plus a diagnostic ramdisk.
+MIN_RANGE = 0x20000000          # 512 MiB
+ALIGN = 0x2000000               # 32 MiB, one 16K L2 block
+LOW_LIMIT = 0x100000000         # 4 GiB, above every khaje XPU carve-out
+# Upper search bound (16 GiB); even 8 GB khaje phones stay below it.
+HIGH_LIMIT = 0x400000000
 
 
 def parse(blob):
@@ -63,8 +72,9 @@ def parse(blob):
 def select_memory(blob):
     nodes, reserved = parse(blob)
     root = nodes.get('', {})
-    if b'qcom,khaje\0' not in root.get('compatible', b''):
-        raise ValueError('expected a live khaje/spes device tree')
+    compatible = root.get('compatible', b'')
+    if b'qcom,khaje' not in compatible and b'qcom,sm6225' not in compatible:
+        raise ValueError('expected a live khaje/sm6225 device tree (spes, fog)')
     def cells(props, key, default):
         value = props.get(key, struct.pack('>I', default))
         if len(value) != 4:
@@ -94,15 +104,17 @@ def select_memory(blob):
                     raise ValueError('unresolved dynamic reservation above 4 GiB')
     candidates = []
     for base, size in banks:
-        spans = [(max(base, 0x100000000), min(base + size, 0x400000000))]
+        spans = [(max(base, LOW_LIMIT), min(base + size, HIGH_LIMIT))]
         for rb, rs in reserved:
             spans = [(a, b) for lo, hi in spans for a, b in
                      ((lo, min(hi, rb)), (max(lo, rb + rs), hi)) if a < b]
         for lo, hi in spans:
-            lo = (lo + 0x1ffffff) & ~0x1ffffff
-            hi &= ~0x1ffffff
-            if hi - lo >= 0x20000000:
+            lo = (lo + ALIGN - 1) & ~(ALIGN - 1)
+            hi &= ~(ALIGN - 1)
+            if hi - lo >= MIN_RANGE:
                 candidates.append((lo, hi - lo))
     if not candidates:
-        raise ValueError('no verified >=512 MiB RAM range above 4 GiB; supply the live FDT')
+        raise ValueError('no verified >=512 MiB RAM range above 4 GiB; '
+                         'supply the live FDT (4 GB devices map their upper bank '
+                         'above 4 GiB; check /memory and /reserved-memory)')
     return max(candidates, key=lambda item: item[1])

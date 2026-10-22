@@ -1,3 +1,63 @@
+# Redmi 10C (fog) port scaffolding — 2026-10-22
+
+- **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
+  (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). Nothing has
+  been booted on fog yet; every hardware claim below is from source, not the
+  handset.
+- **Device family**: `fog` = Redmi 10C, `rain` = Redmi 10 Power, `wind` =
+  Redmi 10 variant; all khaje/SM6225, Adreno 610, 4x Gold (A73) @2.4 GHz.
+  `fog`/`rain` share the board. The profile is intended to cover all three.
+- **Touch is SPI, not spes I2C**: stock `khaje-idp.dtsi` has the digitizer on
+  `qupv3_se0_spi` (`novatek@0`, compatibles `novatek,NVT-ts-spi` and
+  `focaltech,fts`), reset GPIO 86, IRQ GPIO 80, 720x1650 display coords.
+  `fog.dtsi`/`rain.dtsi`/`wind.dtsi` disable the I2C `synaptics_tcm@20` and
+  `novatek@62` nodes. `sweet_touch.c` (QUP SE2 I2C, clamp 1080x2400) cannot
+  drive it. Keep `sweettouch=0` on fog until a QUPv3 SE0 SPI path exists.
+- **Changes on branch `fog`**:
+  - `tools/mkadt.py`: device table (`topaz`, `spes`, `fog`). `fog` = identity
+    `xiaomi,fog`, `/fog-platform`, 4 Gold cores @2.4 GHz, splash
+    `0x5c000000` 720x1650 stride 2880, synthetic chip ID, iPhone X canvas
+    1125x2436 @3x (centre crop until a scale path exists). spes/topaz output
+    is unchanged.
+  - `tools/spes_memory.py`: shared khaje selector, accepts `qcom,khaje` and
+    `qcom,sm6225`, named `MIN_RANGE`/`ALIGN`/`LOW_LIMIT`/`HIGH_LIMIT`, clearer
+    4 GB error. Still only accepts RAM above 4 GiB (all khaje XPU carve-outs
+    are below). A 4 GB phone is expected to have ~2 GiB above 4 GiB.
+  - `shim/build.sh`, `shim/console.h`, `shim/mmu.h`: `SHIM_FB_BASE`,
+    `SHIM_FB_W`, `SHIM_FB_H` overrides; defaults 1080x2400/`0x5c000000` keep
+    existing images identical. Boot shim console and `boot_args` Video now
+    follow the panel.
+  - New `tools/build-fog-diagnostic.sh` (RAM-only `rd=md0`, 720x1650 shim),
+    `tools/build-fog-ios.sh` (UFS root, `cpus=1`, touch/keys/USB off),
+    `tools/backup-fog.sh` (read-only partition + /sdcard backup).
+  - New `tests/test_fog.py` (fog ADT, 4 GB map, spes/topaz preservation);
+    `docs/FOG-PORT.md`; README fog section; CI push trigger for branch `fog`.
+- **Checks run on Windows host (2026-10-22)**:
+  `python -m unittest tests.test_fog tests.test_spes` = 20 tests OK.
+  Full discovery has one pre-existing Windows-only error in
+  `test_ios_root` (`os.chown` absent), unrelated to this work.
+  `git apply`/kernel build was not run here; no fog kernel patch was added.
+  `bash -n` was not available on this Windows host — run it on the Mac/CI.
+- **Not done / needs the handset**:
+  1. Backup: run `tools/backup-fog.sh` before any flash or userdata iOS
+     install (not needed for `fastboot boot` RAM tests).
+  2. Capture `dtb/fog-live.dtb` (root ADB:
+     `adb exec-out su -c 'cat /sys/firmware/fdt' > dtb/fog-live.dtb`), then
+     `python3 tools/mkadt.py shim/out/fog.adt --device fog --memory-dtb
+     dtb/fog-live.dtb`. This proves the upper RAM bank and the splash base.
+  3. Run `tools/build-fog-diagnostic.sh` and `fastboot boot` it. Expect PID 1
+     fbcon text on 720x1650. If the screen is black, check splash base/panel
+     geometry (the phone still runs Android; reboot recovers).
+  4. Port SPI touch (QUPv3 SE0, reset 86, IRQ 80, regulator AVDD), add a fog
+     coordinate clamp, gate it on `/fog-platform`.
+  5. Display scale: current GUI is a centre crop of 1125x2436 on 720x1650.
+     `sweetfb_native=1` hardcodes 1080x2400 in SweetHID and does not fit fog;
+     do not use it. Needs a present() scale path + HID panel-size source.
+  6. Verify keys/PMIC, UFS, GPU, Wi-Fi that were validated on spes; keep
+     `sweetkeys=0 sweethw=0` until each is tested.
+- **Images**: none built or run for fog yet. No commit/push existed when this
+  note was written (see the next commit on `fog`).
+
 # GPU Stage 5 ARM SMMUv2 SMR Invalidation Before S2CR Routing Update — 2026-10-22
 
 - **Hardware Diagnostic Breakthrough & Architecture Root Cause Analysis**:

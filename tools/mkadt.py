@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Build the minimal Apple Device Tree that the TOPAZ xnu needs to boot.
+"""Build the minimal Apple Device Tree that the SWEET xnu needs to boot.
 
 Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the topaz (Redmi Note 12 4G, SM6225 khaje) live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem]
+address comes from the khaje (SM6225) live FDT. The device profile selects
+the DT identity, panel geometry and clock; spes/fog additionally require the
+bootloader-populated live FDT for RAM. Usage:  mkadt.py OUT.adt [--device
+topaz|spes|fog] [--memory-dtb LIVE.dtb] [--dump] [--qemu] [--highmem]
 """
 import argparse, hashlib, os, struct, sys
 
@@ -24,10 +27,9 @@ SOC_BASE = 0x01000000
 # interrupt-controller@f200000 (redistributor-stride 0x20000, 8 cores)
 GICD, GICD_SIZE = 0x0f200000, 0x10000
 GICR, GICR_SIZE = 0x0f300000, 0x100000
-# cont_splash_region left lit by ABL
-FB, FB_SIZE = 0x5c000000, 0xf00000
+# cont_splash_region left lit by ABL (same carve-out on khaje/spes/fog)
+FB_SIZE = 0xf00000
 SWEET_ECID = 0x544f50415a000001  # 'TOPAZ' + 1, synthetic
-FB_W, FB_H, FB_STRIDE = 1080, 2400, 1080 * 4
 # Internal UFS host (ufshc@4804000 "ufs_mem"); QEMU virt has none
 UFS, UFS_SIZE = 0x04804000, 0x3000
 TIMEBASE = 19200000
@@ -36,7 +38,29 @@ VTIMER_INTID = 19
 QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE = 0x08000000, 0x080a0000, 62500000
 QEMU_VTIMER_INTID = 27
 
-BOOT_MANIFEST_HASH = hashlib.sha384(b'topaz boot manifest').digest()
+# Per-device identity and panel. Only "topaz" keeps a static RAM layout; the
+# ports require --memory-dtb because their stock memory nodes are zero-filled.
+#   clock:    Gold-cluster nominal clock in Hz
+#   chip_id:  synthetic unique-chip-id (never the phone's real ECID)
+#   platform: optional kernel platform marker node (SecureDTLookupEntry)
+#   fb:       (splash base, width, height); stride is width * 4
+#   canvas:   IOMobileFramebuffer canvas reported to iOS (iPhone X logical size)
+DEVICES = {
+    'topaz': dict(clock=2803200000, chip_id=SWEET_ECID, platform=None,
+                  live_memory=False, fb=(0x5c000000, 1080, 2400),
+                  canvas=(1125, 2436), display_scale=3),
+    'spes': dict(clock=2400000000, chip_id=0x5350455300000001,
+                 platform='spes-platform', live_memory=True,
+                 fb=(0x5c000000, 1080, 2400),
+                 canvas=(1125, 2436), display_scale=3),
+    # Redmi 10C (fog), Redmi 10 Power (rain): 720x1650 DSI panel. The iPhone X
+    # logical canvas is kept so UIKit has a supported screen class; until the
+    # present() scale path exists the panel shows the centre crop.
+    'fog': dict(clock=2400000000, chip_id=0x464f470000000001,
+                platform='fog-platform', live_memory=True,
+                fb=(0x5c000000, 720, 1650),
+                canvas=(1125, 2436), display_scale=3),
+}
 
 # The iOS userland is the iPhone X (iPhone10,3 / D22AP) IPSW. MobileGestalt
 # derives product type, device class, home-button-less UI, artwork etc. from
@@ -73,13 +97,17 @@ def node(name, props=(), children=()):
 
 def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
-    phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
-    if device not in ('topaz', 'spes'):
+    if device not in DEVICES:
         raise ValueError('unknown device')
-    if device == 'spes':
+    profile = DEVICES[device]
+    phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
+    if profile['live_memory']:
         if highmem or qemu or memory is None:
-            raise ValueError('spes requires --memory-dtb from the live phone; no --highmem/--qemu')
+            raise ValueError(f'{device} requires --memory-dtb from the live phone; no --highmem/--qemu')
         phys_base, mem_size = memory
+    fb_base, fb_w, fb_h = profile['fb']
+    fb_stride = fb_w * 4
+    canvas_w, canvas_h = profile['canvas']
     gicd, gicr, timebase = (QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu else (GICD, GICR, TIMEBASE)
     seed = seed if seed is not None else os.urandom(64)
     phandle = iter(range(1, 1000))
@@ -102,15 +130,15 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
         ('crypto-hash-method', cstr('sha2-384')),
         # MobileGestalt's screen class: display-scale (u32, default 0) comes
         # from /chosen, the pixel size from IOMobileFramebuffer. Scale 0 makes
-        # SpringBoard's FBSDisplayMode "infxinf@0x" invalid. 1080x2400 @3x =
-        # 360x800 points (like iPhone X class devices).
-        ('display-scale', u32(3)),
+        # SpringBoard's FBSDisplayMode "infxinf@0x" invalid. The ports report
+        # the iPhone X class canvas at 3x (375x812 points).
+        ('display-scale', u32(profile['display_scale'])),
         # XNU derives IOPlatformUUID (gethostuuid) from these on arm; without
         # them CFPreferences cannot use kCFPreferencesCurrentHost (no ByHost
         # files), so e.g. DataMigration never records LastSystemVersion and
         # migrates on every boot. Synthetic ECID (not the phone's); chip-id
         # of the A11 that the iPhone X userland expects.
-        ('unique-chip-id', struct.pack('<Q', 0x5350455300000001 if device == 'spes' else SWEET_ECID)),
+        ('unique-chip-id', struct.pack('<Q', profile['chip_id'])),
         ('chip-id', u32(0x8015)),
         # Security status as on a dev-fused, undemoted board (tuple 0,0,1,1):
         # MobileGestalt reads these from /chosen, and mobileactivationd's
@@ -128,8 +156,8 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
         # with CSR_ALLOW_UNRESTRICTED_FS (vm_unix.c shared region checks).
         node('asmb', [ph(), ('lp-sip0', u64(0x6f)), ('lp-sip1', u32(1))])])
 
-    # TOPAZ SMP: only the four Cortex-A73 (gold) cores, MPIDR 0x100-0x103:
-    # the Kryo 260 Silver cores have no 16K granule, so the shim boots xnu
+    # Khaje SMP: only the four Cortex-A73 (gold) cores, MPIDR 0x100-0x103:
+    # the Kryo Silver cores have no 16K granule, so the shim boots xnu
     # on gold CPU 0x100 and parks the silver cluster. One cluster. The kernel defaults to one
     # and uses cpus=N to select an initial prefix (N <= 8).
     # QEMU retains its original single-CPU tree: its MPIDRs differ from sweet.
@@ -149,7 +177,7 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
             ('l3-cache-id', u32(0)),
             ('state', cstr('running' if core == 0 else 'stopped')),
             ('timebase-frequency', u32(timebase)),
-            ('clock-frequency', u32(2400000000 if device == 'spes' else 2803200000)),
+            ('clock-frequency', u32(profile['clock'])),
             ('bus-frequency', u32(100000000)),
             ('memory-frequency', u32(1866000000)),
             ('peripheral-frequency', u32(timebase)),
@@ -185,16 +213,16 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
             ph(),
             ('device_type', cstr('display-subsystem')),
             ('compatible', cstr('sweet,display')),
-            ('canvas-width', u32(1125)),
-            ('canvas-height', u32(2436)),
+            ('canvas-width', u32(canvas_w)),
+            ('canvas-height', u32(canvas_h)),
         ])])
 
     fbcon = node('sweet-fbcon', [
         ph(),
-        ('reg', u64(FB, FB_SIZE)),
-        ('width', u32(FB_W)),
-        ('height', u32(FB_H)),
-        ('stride', u32(FB_STRIDE)),
+        ('reg', u64(fb_base, FB_SIZE)),
+        ('width', u32(fb_w)),
+        ('height', u32(fb_h)),
+        ('stride', u32(fb_stride)),
     ])
 
     # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
@@ -235,13 +263,13 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons] + ([node('spes-platform')] if device == 'spes' else []) + product + ([] if qemu else [ufs]))
+    ], [chosen, defaults, cpus, arm_io, fbcon, buttons] + ([node(profile['platform'])] if profile['platform'] else []) + product + ([] if qemu else [ufs]))
 
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('out')
-    ap.add_argument('--device', choices=['topaz', 'spes'], default='topaz')
+    ap.add_argument('--device', choices=sorted(DEVICES), default='topaz')
     ap.add_argument('--memory-dtb', help='live /sys/firmware/fdt (stock images have no RAM map)')
     ap.add_argument('--dump', action='store_true')
     ap.add_argument('--qemu', action='store_true')

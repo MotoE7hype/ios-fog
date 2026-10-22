@@ -1,10 +1,20 @@
 #pragma once
 #include <stdint.h>
 
+/* Defaults are the spes/topaz 1080x2400 splash; build.sh overrides them from
+ * SHIM_FB_BASE/SHIM_FB_W/SHIM_FB_H for other panels (fog: 720x1650). */
+#ifndef FB_BASE
 #define FB_BASE		0x5c000000UL	/* reserved-memory cont_splash_region */
+#endif
+#ifndef FB_W
 #define FB_W		1080
+#endif
+#ifndef FB_H
 #define FB_H		2400
+#endif
+#ifndef FB_STRIDE
 #define FB_STRIDE	(FB_W * 4)	/* a8r8g8b8, matches mainline simplefb */
+#endif
 
 #define RED	0xffff0000U
 #define BLUE	0xff0000a0U

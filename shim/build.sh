@@ -13,7 +13,12 @@ BOOT_HEADER_VERSION=${BOOT_HEADER_VERSION:-4}
 case "$BOOT_HEADER_VERSION" in 3|4) ;; *) echo "boot header must be 3 or 4" >&2; exit 1;; esac
 MKBOOTIMG=${MKBOOTIMG:-mkbootimg}
 command -v "$MKBOOTIMG" >/dev/null || { echo "Set MKBOOTIMG to the AOSP mkbootimg executable" >&2; exit 1; }
-CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra"
+# Panel geometry of the continuous splash. Defaults keep topaz/spes unchanged;
+# the fog builders export SHIM_FB_W=720 SHIM_FB_H=1650 (same splash base).
+FB_BASE=${SHIM_FB_BASE:-0x5c000000}
+FB_W=${SHIM_FB_W:-1080}
+FB_H=${SHIM_FB_H:-2400}
+CFLAGS="-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only -mstrict-align -fno-stack-protector -Wall -Wextra -DFB_BASE=${FB_BASE}UL -DFB_PHYS=${FB_BASE}UL -DFB_W=${FB_W} -DFB_H=${FB_H}"
 mkdir -p out
 for f in start.S shim.c console.c mmu.c fdt.c loader.c ufs.c; do
 	$CC $CFLAGS -c $f -o out/${f%.*}.o

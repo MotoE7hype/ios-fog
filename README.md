@@ -16,6 +16,16 @@ explicit approval to erase Android data. Boot images are still loaded with
 `fastboot boot`; bootloaders, recovery, modem and persist are preserved.
 Apple filesystem images and device-specific dumps are not distributed here.
 
+## Redmi 10C (`fog`) — scaffolding only
+
+Branch `fog` adds a device profile for the Redmi 10C (SM6225, 4 GB, 720x1650).
+It has **not booted on the handset yet**, and touch/display are not ported:
+fog uses an SPI Novatek/FocalTech controller, not spes' I²C part. The branch
+contains `--device fog` ADT generation, a shared 4 GB-capable khaje memory
+selector, 720x1650 shim console overrides, RAM-only/full image builders and a
+read-only partition backup script. Start with
+[docs/FOG-PORT.md](docs/FOG-PORT.md); tests use `python3 -m unittest tests.test_fog`.
+
 ## Changes
 
 - `tools/mkadt.py --device spes --memory-dtb LIVE.dtb`: spes identity, four Gold
@@ -83,7 +93,7 @@ The tool intentionally refuses it. No recovery image is supplied in this reposit
 ## Build preparation
 
 Build XNU with `.github/workflows/xnu.yml` in your own fork (manual dispatch).
-It retains the SWEET machine name and applies patches 0001–0096. Download the
+It retains the SWEET machine name and applies patches 0001–0099. Download the
 `xnu-kernel` artifact into `xnu/out`. The [first corrected kernel build passed](https://github.com/AdyaGMD/ios-spes/actions/runs/39273597179) at source commit `7f915db`.
 
 The shim needs an AArch64 GNU toolchain and an executable AOSP `mkbootimg`.
@@ -163,10 +173,11 @@ python3 -m unittest discover -s tests -v
 bash -n shim/build.sh
 ```
 
-Eight host tests cover memory selection, reserved regions, malformed input,
-stock-map rejection, spes ADT contents and preservation of the topaz profile.
-All shim C/assembly translation units cross-compile with Clang for Cortex-A53.
-All 89 port patches apply to the pinned XNU tree and the full kernel builds in CI.
+Host tests cover memory selection, reserved regions, malformed input,
+stock-map rejection, spes/fog ADT contents, the fog 4 GB map and preservation
+of the topaz profile. All shim C/assembly translation units cross-compile with
+Clang for Cortex-A53.
+All 99 port patches apply to the pinned XNU tree and the full kernel builds in CI.
 The RAM-only phone boot reached PID 1 and repeated heartbeat messages;
 this does not establish a working iOS interface or full hardware support.
 
