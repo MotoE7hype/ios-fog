@@ -6,8 +6,32 @@
   (renamed from `src`), `origin` = the fork, `upstream` = AdyaGMD. `fog` is
   pushed through `dd4a261`.
 - **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
-  (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). No fog image
-  has been booted yet.
+  (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). The RAM-only
+  diagnostic has booted on hardware (next bullet); no iOS userland yet.
+- **MILESTONE 2026-10-22 19:49 local — RAM-only diagnostic boots to PID 1 on
+  the live `rain` handset.** `fastboot boot shim/out/rain-diagnostic.img`
+  (17,440,768 bytes, sha256 `eeec115c…bed8b`) showed the shim `sweet
+  milestone 4` screen, `SILVER no 16K granule: handing off to gold CPU 0x100`,
+  GIC/GICR setup (redistributors aff `0x101`/`0x102`/`0x103`, `en=000C`),
+  `GOLD speed probe shown, xnu in 8 s`, loader `EMBED`/`PHYS`/`VIRT`/`ENTRY`
+  and `XNU jumping`, then kernel text: `SPES FB` (spes-named driver) mapped
+  `720x1650 stride 2880 @ 0x5c000000`, default surface presented as 1125x2436
+  (centre crop), `1/1 CPUs` verified (`cpus=1`), `SWEET AMFI: built-in
+  interface`, `SWEET WDT: IOWatchdog registered` (accepts checks, never
+  fires), `SWEET HID: buttons/touch registered`, `SWEET: trust caches
+  unavailable`, `BSD root: md0`, `load_init_program: attempting
+  /sbin/launchd`, `*** SWEET userspace: init running as PID 1 ***`, then
+  `SWEET init: still alive` every 5 s. No panic; it ran stably while
+  photographed. Nothing was written; recovery is holding Power 10–15 s.
+  - Photos (not in git): `%USERPROFILE%\Downloads\20261022_1948*.jpg`,
+    `_1949*.jpg`; camera watermark "Galaxy S23".
+  - `PHYS base=00000000 size=40000000` is correct, not a bad map: `con_hex2`
+    takes `uint32_t`, so the shim's `PHYS base=` truncates `0x100000000` to
+    0 while `size=` is the full 1 GiB. 1 GiB is still the SpringBoard OOM
+    risk (spes had ~3.95 GiB).
+  - Not yet established on fog: heartbeat duration beyond ~1 min, UFS root,
+    touch (`sweettouch=0`), keys (`sweetkeys=0`), USB (`sweethw=0`), SMP
+    (`cpus=4`), any iOS userland.
 - **Live handset verified 2026-10-22**: it reports `rain_global`, model
   220333QNY (Redmi 10 Power), Android 15 / HyperOS 2.0.9.0.VJXCNXM,
   `verifiedbootstate=orange`, Magisk root, slot `_a`. fog ROMs are rain ROMs,
@@ -74,21 +98,28 @@
 - **Not done / needs the handset**:
   1. Full backup: run `tools/backup-fog.sh` before any flash or userdata iOS
      install (not needed for `fastboot boot` RAM tests). Watch for exit 3.
-  2. Boot `shim/out/rain-diagnostic.img` with `fastboot boot` (built in CI,
-     see Images). Expect PID 1 fbcon text on 720x1650; `fastboot reboot`
-     recovers Android because nothing is written.
+     The user is doing a manual TWRP backup; a script backup is still pending.
+  2. Diagnostic boot: **done 2026-10-22 19:49, reached PID 1 and a 5 s
+     heartbeat (see first bullet).**
+     Next: boot it again with `cpus=4` and/or `sweetkeys=1 sweethw=1` once the
+     base image is understood, and record the heartbeat for >1 min.
   3. Port SPI touch (QUPv3 SE0 `spi@4a80000`, reset 86, IRQ 80, 9.6 MHz,
      Novatek `swrst-n8`/fast-read), add a fog coordinate clamp, gate it on
      `/fog-platform`.
-  4. Display scale: current GUI is a centre crop of 1125x2436 on 720x1650.
+  4. Display scale: current GUI is a centre crop of 1125x2436 on 720x1650
+     (confirmed on hardware: `presented as 1125x2436`).
      `sweetfb_native=1` hardcodes 1080x2400 in SweetHID and does not fit fog;
      do not use it. Needs a present() scale path + HID panel-size source.
   5. Verify keys/PMIC (`fpc` fingerprint, not needed for boot), UFS, GPU,
      Wi-Fi that were validated on spes; keep `sweetkeys=0 sweethw=0` until
      each is tested.
-- **Images (built, not booted)**: the `fog-image` workflow (ubuntu, dispatch)
-  builds the RAM-only diagnostic in CI; run `39819237739` on `fog` succeeded
-  and uploaded artifact `fog-diagnostic-rain`:
+  6. Full iOS image: build the HFSX root on macOS
+     (`tools/mkiosroot-macos.sh`) and the boot image with the `/product` node
+     from `research/ipsw-x/d22ap.adt`; `build-fog-ios.sh` still needs a live
+     FDT (no `FOG_MEMORY` yet).
+- **Images (diagnostic booted, iOS image not built)**: the `fog-image` workflow
+  (ubuntu, dispatch) builds the RAM-only diagnostic in CI; run `39819237739` on
+  `fog` succeeded and uploaded artifact `fog-diagnostic-rain`:
   - `rain-diagnostic.img` 17,440,768 bytes,
     sha256 `eeec115c83d0c39439b3a49013f90b26bf7f03ae398dfd7fb2385f23456bed8b`
   - inputs: `device=rain`, `memory=0x100000000:0x40000000`,
