@@ -277,20 +277,51 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
     ], [chosen, defaults, cpus, arm_io, fbcon, buttons] + ([node(profile['platform'])] if profile['platform'] else []) + product + ([] if qemu else [ufs]))
 
 
+def parse_memory_range(text):
+    """'BASE:SIZE' (hex or decimal, ',' also accepted) from a verified live FDT.
+
+    This exists for CI, where the live dump cannot be committed (serial). It
+    is not a way to guess: the range must come from select_memory() on the
+    handset, and is only valid for that unit.
+    """
+    parts = text.strip().replace(',', ':').split(':')
+    if len(parts) != 2:
+        raise ValueError('memory range must be BASE:SIZE, e.g. 0x100000000:0x40000000')
+    try:
+        base, size = (int(p, 0) for p in parts)
+    except ValueError:
+        raise ValueError('memory range must be numeric (0x... accepted)')
+    if base < 0 or size <= 0:
+        raise ValueError('memory range must be positive')
+    if base % 0x200000 or size % 0x200000:
+        raise ValueError('memory range must be 2 MiB aligned')
+    if size < 0x20000000:
+        raise ValueError('memory range smaller than 512 MiB')
+    return base, size
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('out')
     ap.add_argument('--device', choices=sorted(DEVICES), default='topaz')
     ap.add_argument('--memory-dtb', help='live /sys/firmware/fdt (stock images have no RAM map)')
+    ap.add_argument('--memory-range', metavar='BASE:SIZE',
+                    help='RAM range previously selected from the live FDT; CI only')
     ap.add_argument('--dump', action='store_true')
     ap.add_argument('--qemu', action='store_true')
     ap.add_argument('--highmem', action='store_true')
     args = ap.parse_args()
+    if args.memory_dtb and args.memory_range:
+        ap.error('use either --memory-dtb or --memory-range, not both')
     try:
         memory = None
         if args.memory_dtb:
             from spes_memory import select_memory
             memory = select_memory(open(args.memory_dtb, 'rb').read())
+        elif args.memory_range:
+            memory = parse_memory_range(args.memory_range)
+            print('warning: --memory-range bypasses the live FDT; only boot this '
+                  'image on the unit it was measured on', file=sys.stderr)
         root = build(qemu=args.qemu, highmem=args.highmem, device=args.device, memory=memory)
     except ValueError as e:
         ap.error(str(e))

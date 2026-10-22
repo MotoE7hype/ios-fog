@@ -137,6 +137,20 @@ class FogAdtTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mkadt.build(device='cancun')
 
+    def test_memory_range_parser(self):
+        # CI cannot commit the live FDT (it holds the serial), so it passes the
+        # range selected on the handset instead: 4 GB khaje -> 1 GiB @ 4 GiB.
+        self.assertEqual(mkadt.parse_memory_range('0x100000000:0x40000000'),
+                         (0x100000000, 0x40000000))
+        self.assertEqual(mkadt.parse_memory_range('0x100000000,0x40000000'),
+                         (0x100000000, 0x40000000))
+        for bad in ('0x100000000', '0x100000000:0x40000000:0', 'huge:0x40000000',
+                    '0x100000000:0x100000', '0x100000000:-0x40000000',
+                    '0x100000001:0x40000000'):
+            with self.subTest(text=bad):
+                with self.assertRaises(ValueError):
+                    mkadt.parse_memory_range(bad)
+
 
 if __name__ == '__main__':
     unittest.main()

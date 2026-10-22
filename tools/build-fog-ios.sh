@@ -21,5 +21,9 @@ python3 tools/mkpayload.py "$kernel" "shim/out/$name.adt" "shim/out/$name.payloa
     --cmdline 'debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10 sweettouch=0 sweetkeys=0 sweethw=0 sweetfb_stayon=1 sweetfb_noconsole=1'
 SHIM_FB_W=720 SHIM_FB_H=1650 BOOT_HEADER_VERSION=3 shim/build.sh "out/$name.payload"
 cp shim/out/shim-boot.img "shim/out/$name.img"
-shasum -a 256 "shim/out/$name.img" > "shim/out/$name.img.sha256"
+if command -v shasum >/dev/null; then
+    shasum -a 256 "shim/out/$name.img" > "shim/out/$name.img.sha256"
+else
+    sha256sum "shim/out/$name.img" > "shim/out/$name.img.sha256"
+fi
 echo "Built shim/out/$name.img (1x Gold CPU, UFS root); nothing sent to phone."

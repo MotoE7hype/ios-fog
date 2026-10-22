@@ -1,0 +1,110 @@
+name: fog-image
+
+# Builds the RAM-only diagnostic boot image on a Linux runner, so a Windows
+# host with no cross toolchain can still boot the port: download the artifact
+# and run `fastboot boot <img>`. Nothing here touches a phone.
+#
+# The ADT normally takes its RAM map from a live FDT dump, but that dump holds
+# the handset serial and must not be committed. The dispatch input carries the
+# range that select_memory() picked on the bring-up unit instead; the image is
+# then only valid for that unit. Pass another BASE:SIZE (or add a FDT input)
+# for a different phone.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: identity to build (fog, rain or wind; layout is shared)
+        type: choice
+        options: [rain, fog, wind]
+        default: rain
+      kernel_run:
+        description: xnu run id that holds xnu-kernel (empty = latest success)
+        default: ""
+      memory:
+        description: RAM range BASE:SIZE measured on the target unit
+        default: "0x100000000:0x40000000"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fog-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DEVICE: ${{ inputs.device }}
+      MEMORY: ${{ inputs.memory }}
+      KERNEL_RUN: ${{ inputs.kernel_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu cpio
+          aarch64-linux-gnu-gcc --version | head -1
+          clang --version | head -1
+
+      - name: AOSP mkbootimg (pinned)
+        run: |
+          curl -fsSL 'https://android.googlesource.com/platform/system/tools/mkbootimg/+archive/refs/tags/android-13.0.0_r1.tar.gz' \
+            | tar xz -C "$RUNNER_TEMP" --one-top-level=mkbootimg
+          chmod +x "$RUNNER_TEMP/mkbootimg/mkbootimg.py"
+          "$RUNNER_TEMP/mkbootimg/mkbootimg.py" --help >/dev/null
+          echo "MKBOOTIMG=$RUNNER_TEMP/mkbootimg/mkbootimg.py" >> "$GITHUB_ENV"
+
+      - name: Fetch kernel artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run="$KERNEL_RUN"
+          if [ -z "$run" ]; then
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow xnu.yml \
+              --branch "$GITHUB_REF_NAME" --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId')
+          fi
+          [ -n "$run" ] && [ "$run" != null ] || { echo "no successful xnu run" >&2; exit 1; }
+          echo "kernel run: $run"
+          gh run download "$run" -R "$GITHUB_REPOSITORY" -n xnu-kernel -D kernel
+          find kernel -type f -printf '%12s %p\n' | sort -n | tail -5
+          kernel=$(find kernel -type f -name 'kernel.*' ! -name '*.dSYM*' -printf '%s %p\n' \
+            | sort -n | tail -1 | cut -d' ' -f2-)
+          [ -n "$kernel" ] || { echo "no kernel.* in the artifact" >&2; exit 1; }
+          echo "using $kernel"
+          echo "KERNEL=$PWD/$kernel" >> "$GITHUB_ENV"
+
+      - name: Build diagnostic image
+        run: |
+          CROSS_COMPILE=aarch64-linux-gnu- \
+            FOG_DEVICE="$DEVICE" FOG_MEMORY="$MEMORY" \
+            tools/build-fog-diagnostic.sh "$KERNEL"
+
+      - name: Summary
+        run: |
+          img="shim/out/$DEVICE-diagnostic.img"
+          ls -l "$img"
+          cat "$img.sha256"
+          {
+            echo "### fog diagnostic image"
+            echo
+            echo "- identity: \`$DEVICE\`"
+            echo "- RAM range: \`$MEMORY\` (only valid on the unit it was measured on)"
+            echo "- size: $(stat -c %s "$img") bytes"
+            echo "- sha256: \`$(cut -d' ' -f1 "$img.sha256")\`"
+            echo
+            echo 'Boot it with `adb reboot bootloader` then `fastboot boot <img>`; no partition is written.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fog-diagnostic-${{ inputs.device }}
+          path: |
+            shim/out/*-diagnostic.img
+            shim/out/*-diagnostic.img.sha256
+          if-no-files-found: error
