@@ -73,10 +73,17 @@ jobs:
           echo "kernel run: $run"
           gh run download "$run" -R "$GITHUB_REPOSITORY" -n xnu-kernel -D kernel
           find kernel -type f -printf '%12s %p\n' | sort -n | tail -5
-          kernel=$(find kernel -type f -name 'kernel.*' ! -name '*.dSYM*' -printf '%s %p\n' \
-            | sort -n | tail -1 | cut -d' ' -f2-)
-          [ -n "$kernel" ] || { echo "no kernel.* in the artifact" >&2; exit 1; }
-          echo "using $kernel"
+          # The artifact also holds kernel.development.sweet.link/*.a, which is
+          # bigger than the kernel; pick the largest 64-bit Mach-O instead.
+          kernel=""
+          while IFS= read -r f; do
+            if [ "$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')" = cffaedfe ]; then
+              kernel="$f"
+              break
+            fi
+          done < <(find kernel -type f -name 'kernel.*' -printf '%s %p\n' | sort -rn | cut -d' ' -f2-)
+          [ -n "$kernel" ] || { echo "no 64-bit Mach-O kernel in the artifact" >&2; exit 1; }
+          echo "using $kernel ($(stat -c %s "$kernel") bytes)"
           echo "KERNEL=$PWD/$kernel" >> "$GITHUB_ENV"
 
       - name: Build diagnostic image
