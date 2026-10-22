@@ -51,13 +51,11 @@ jobs:
           aarch64-linux-gnu-gcc --version | head -1
           clang --version | head -1
 
-      - name: AOSP mkbootimg (pinned)
+      - name: AOSP mkbootimg (vendored, android-13.0.0_r1)
         run: |
-          curl -fsSL 'https://android.googlesource.com/platform/system/tools/mkbootimg/+archive/refs/tags/android-13.0.0_r1.tar.gz' \
-            | tar xz -C "$RUNNER_TEMP" --one-top-level=mkbootimg
-          chmod +x "$RUNNER_TEMP/mkbootimg/mkbootimg.py"
-          "$RUNNER_TEMP/mkbootimg/mkbootimg.py" --help >/dev/null
-          echo "MKBOOTIMG=$RUNNER_TEMP/mkbootimg/mkbootimg.py" >> "$GITHUB_ENV"
+          chmod +x tools/vendor/mkbootimg/mkbootimg.py
+          tools/vendor/mkbootimg/mkbootimg.py --help >/dev/null
+          echo "MKBOOTIMG=$PWD/tools/vendor/mkbootimg/mkbootimg.py" >> "$GITHUB_ENV"
 
       - name: Fetch kernel artifact
         env:
