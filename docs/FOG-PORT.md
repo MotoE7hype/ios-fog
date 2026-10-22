@@ -24,6 +24,30 @@ controller, and its coordinate clamp is 1080x2400. **Touch is intentionally
 off in the fog images** (`sweettouch=0`) until an SPI transport is implemented
 and tested.
 
+Stock DT facts for that work (`khaje-idp.dtsi`, included by `fog.dtsi`):
+
+```
+&qupv3_se0_spi {
+    novatek@0 {
+        compatible = "novatek,NVT-ts-spi", "focaltech,fts";
+        spi-max-frequency = <0x927c00>;              /* 9.6 MHz */
+        novatek,reset-gpio = <&tlmm 86 0>;
+        novatek,irq-gpio = <&tlmm 80 8193>;
+        novatek,swrst-n8-addr = <0x3f0fe>;
+        novatek,spi-rd-fast-addr = <0x3f310>;
+        focaltech,max-touch-number = <10>;
+        focaltech,display-coords = <0 0 0x2cf 0x671>; /* 720x1650 */
+    };
+};
+```
+
+`fog.dtsi` disables the I2C `synaptics_tcm@20` and `novatek@62` nodes on
+`qupv3_se2_i2c`, so the live digitizer is the SPI node. The primary compatible
+is Novatek; the FocalTech entries are the fallback/coordinate description.
+Confirm the actual controller from the running phone
+(`/sys/bus/spi/devices`, `dmesg | grep -i -E 'novatek|focaltech|NVT'`) before
+writing the transport.
+
 ## What is in this branch
 
 - `tools/mkadt.py --device fog`:
