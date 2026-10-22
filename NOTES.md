@@ -1,9 +1,10 @@
 # ios-fog (fog/rain/wind) port — scaffolding + verified hardware, 2026-10-22
 
-- **Repo**: `MotoE7hype/ios-fog`, a fork of `AdyaGMD/ios-spes`; `fog` is the
-  default branch. Locally it is `C:\Users\boris\Documents\Predvolený projekt\
-  ios-fog` (renamed from `src`), `origin` = the fork, `upstream` = AdyaGMD.
-  Pushed `fog` at `5c6614d`; later commits in this note are pushed too.
+- **Repo**: `MotoE7hype/ios-fog`, a fork of `AdyaGMD/ios-spes` (created via
+  the GitHub API with the cached `MotoE7hype` credential; default branch
+  `fog`). Locally it is `C:\Users\boris\Documents\Predvolený projekt\ios-fog`
+  (renamed from `src`), `origin` = the fork, `upstream` = AdyaGMD. `fog` is
+  pushed through `dd4a261`.
 - **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
   (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). No fog image
   has been booted yet.
