@@ -32,6 +32,29 @@
   - Not yet established on fog: heartbeat duration beyond ~1 min, UFS root,
     touch (`sweettouch=0`), keys (`sweetkeys=0`), USB (`sweethw=0`), SMP
     (`cpus=4`), any iOS userland.
+- **MILESTONE 2026-10-22 late evening — first full iOS image RAM-booted on `rain`.**
+  The Mac-built `shim/out/rain-ios.img` (`fastboot boot`, no partition write)
+  shows the Apple logo on the panel plus kernel text ending in
+  `SK[0]: __nexus_register rapportd(81): nxprov_create: 1` — i.e. Apple's
+  launchd is spawning real iOS daemons (PID 81) and userland is presenting a
+  surface over `sweetfb`. The line is Skywalk nexus spam from
+  `-enable_kprintf_spam`, not an error. At 2026-10-23 00:10 local (~4 h wall
+  clock, only ~5 min of real progress live) it was still on that frame; no
+  photos taken yet, no panic/SpringBoard/Setup reported. `userdata` now holds
+  the 16 GiB HFSX root and the image boots with `ufsrw=1 rootrw=1`, so a hard
+  power-off can leave HFS inconsistent. Open questions: static logo vs. slow
+  progress, SpringBoard (`Too many corpses` risk with only 1 GiB RAM), and how
+  to get a log without USB (`sweetlog=1` writes a ring at the end of the iOS
+  root; only readable by booting TWRP/`fastboot boot` again).
+- **Dual boot**: possible and asked about by the user (decision deferred,
+  "not now, just tell me if it works"). Facts: LUN0 is 53.5 GiB with
+  `userdata` = 42.6 GiB (the iOS root) and `super` = 8.5 GiB (6.4 used);
+  nothing else is big enough, so a dual boot needs either a GPT split of
+  `userdata` (shrink to ~20.6 GiB -> Android gets a fresh empty f2fs; ~26 GiB
+  keeps Android's data via f2fs resize), a TWRP image-swap scheme, or a shrink
+  of `super` (up to 8.5 GiB, iOS root drops to ~7-8 GiB). Boot selection is
+  free: ABL + `fastboot boot <img>` needs no `boot_a` write and RAM is shared
+  by whichever OS runs (Android ~3 GiB, XNU up to 4 GiB, never both).
 - **Live handset verified 2026-10-22**: it reports `rain_global`, model
   220333QNY (Redmi 10 Power), Android 15 / HyperOS 2.0.9.0.VJXCNXM,
   `verifiedbootstate=orange`, Magisk root, slot `_a`. fog ROMs are rain ROMs,
