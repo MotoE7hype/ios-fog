@@ -29,7 +29,9 @@
     follow the panel.
   - New `tools/build-fog-diagnostic.sh` (RAM-only `rd=md0`, 720x1650 shim),
     `tools/build-fog-ios.sh` (UFS root, `cpus=1`, touch/keys/USB off),
-    `tools/backup-fog.sh` (read-only partition + /sdcard backup).
+    `tools/backup-fog.sh` (read-only partition + /sdcard backup),
+    `tools/fog-probe.sh` (read-only one-shot capture of live FDT, dtbo,
+    meminfo/iomem/cmdline, dmesg, SPI/DRM/backlight sysfs; `probe/` ignored).
   - New `tests/test_fog.py` (fog ADT, 4 GB map, spes/topaz preservation);
     `docs/FOG-PORT.md`; README fog section; CI push trigger for branch `fog`.
 - **Checks run on Windows host (2026-10-22)**:
@@ -37,14 +39,17 @@
   Full discovery has one pre-existing Windows-only error in
   `test_ios_root` (`os.chown` absent), unrelated to this work.
   `git apply`/kernel build was not run here; no fog kernel patch was added.
-  `bash -n` was not available on this Windows host — run it on the Mac/CI.
+  `bash -n` (Git for Windows bash, `C:\Program Files\Git\bin\bash.exe`) passes
+  on `tools/fog-probe.sh`, `tools/backup-fog.sh`, both `build-fog-*.sh` and
+  `shim/build.sh`; the scripts have not been executed (no phone/adb here).
 - **Not done / needs the handset**:
   1. Backup: run `tools/backup-fog.sh` before any flash or userdata iOS
      install (not needed for `fastboot boot` RAM tests).
-  2. Capture `dtb/fog-live.dtb` (root ADB:
-     `adb exec-out su -c 'cat /sys/firmware/fdt' > dtb/fog-live.dtb`), then
+  2. Capture the live data with `tools/fog-probe.sh` (writes
+     `probe/fog-*/fog-live.dtb`, `dtbo.img`, dmesg and sysfs copies), then
      `python3 tools/mkadt.py shim/out/fog.adt --device fog --memory-dtb
-     dtb/fog-live.dtb`. This proves the upper RAM bank and the splash base.
+     probe/fog-*/fog-live.dtb`. This proves the upper RAM bank and the splash
+     base.
   3. Run `tools/build-fog-diagnostic.sh` and `fastboot boot` it. Expect PID 1
      fbcon text on 720x1650. If the screen is black, check splash base/panel
      geometry (the phone still runs Android; reboot recovers).

@@ -68,6 +68,8 @@ writing the transport.
 - `tools/build-fog-diagnostic.sh`: RAM-only PID 1 diagnostic (`rd=md0`).
 - `tools/build-fog-ios.sh`: full iOS image builder (UFS root, 1 Gold CPU).
 - `tools/backup-fog.sh`: read-only partition backup (see below).
+- `tools/fog-probe.sh`: read-only capture of the live FDT, `dtbo`, SPI/panel
+  sysfs and `dmesg` (see below).
 - `tests/test_fog.py`: fog ADT geometry, 4 GB memory selection, spes/topaz
   preservation.
 
@@ -102,7 +104,17 @@ already root). Verify at least that `boot.img`, `vendor_boot.img` and
 ## Capture the live memory map
 
 The stock DTBs contain zero-filled `/memory` nodes; ABL fills the real map at
-boot. Boot the phone normally (root ADB) or temporarily boot a recovery:
+boot. Boot the phone normally (root ADB) or temporarily boot a recovery, then
+collect everything the port is still guessing at in one read-only pass:
+
+```sh
+tools/fog-probe.sh                  # writes probe/fog-YYYYmmdd-HHMMSS/
+```
+
+That writes the live FDT, `dtbo`, `dmesg`, `/proc/{meminfo,iomem,cmdline}`,
+the SPI controller/driver list, DRM modes, backlight and by-name sizes, and
+prints a summary (device, RAM, FDT/dtbo size, touch controller). `probe/` is
+git-ignored. The individual commands, if you prefer to run them by hand:
 
 ```sh
 mkdir -p dtb
