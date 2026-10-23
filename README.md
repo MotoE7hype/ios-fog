@@ -10,11 +10,13 @@ Upstream port, for reference: [MakrSas/ios-topaz](https://github.com/MakrSas/ios
 to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**, 6 GB physical RAM.
 The Android “+2 GB” expansion is not RAM available to this kernel.
 
-**This fork (`fog`): hardware verified, not booted yet.** The test handset
-reports `rain_global` (model 220333QNY) with Android 15 / HyperOS 2; the live
-FDT gives 720x1650, Novatek SPI touch and 1 GiB of RAM above 4 GiB. See
-[docs/FOG-PORT.md](docs/FOG-PORT.md) for the measured facts and the exact
-next steps.
+**This fork (`fog`): boots to SpringBoard on the live handset.** The test
+handset reports `rain_global` (model 220333QNY) with Android 15 / HyperOS 2;
+the live FDT gives 720x1650, Novatek SPI touch and 1 GiB of RAM above 4 GiB.
+A Mac-built boot image now boots from `fastboot boot` to the lock/home screen
+with the clock visible (display scaling + HID mapping fixed in patch 0100).
+Touch transport (Novatek SPI on QUPv3 SE0) is still pending. See
+[docs/FOG-PORT.md](docs/FOG-PORT.md) for the measured facts.
 
 **Upstream status (2026-10-21): iOS 16.7.16 boots to its interface on spes.**
 The UI, touchscreen and volume buttons were confirmed on the spes handset.
