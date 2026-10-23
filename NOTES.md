@@ -8,6 +8,63 @@
 - **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
   (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). The RAM-only
   diagnostic has booted on hardware (next bullet); no iOS userland yet.
+- **ACTIVE HANDOFF 2026-10-23 — next task is the fog touch transport (Novatek
+  SPI on QUPv3 SE0).** Display scaling + HID mapping landed in patch `0100`
+  (`a951914`); the device now boots from the flashed boot image to the
+  lock/home screen with the clock visible. Touch still cannot work because
+  `bsd/dev/sweet_touch.c` is spes' QUP0 **SE2 I2C** bring-up (FocalTech/Goodix)
+  while fog's digitizer is **Novatek NVT-ts-spi on QUPv3 SE0** `spi@4a80000`
+  (`reg = <0x04a80000 0x4000>`, compatible `qcom,spi-geni`, `novatek@0` with
+  `novatek,NVT-ts-spi`, IRQ GPIO80, reset GPIO86, display-coords 720x1650).
+  `FOG_TOUCH=1` currently only sets `sweettouch=1 sweetfb_panel_w/h`, so the
+  driver runs the Spes I2C path that never reaches the IC.
+  - **SE0 is in the same QUPv3 wrapper as the working spes I2C SE2**
+    (`0x04a00000` + `0x80000` vs `+0x88000`), so the SE register block layout
+    already used by `sweet_touch.c` (`SE_CMD 0x600`, `SE_CTRL 0x604`,
+    `SE_IRQ 0x610`, `SE_TX 0x700`, `SE_RX 0x780`, `SE_TX/RX_LEN 0x26c/0x270`,
+    packing `0x254/0x260/0x264/0x284/0x288`) is the same block. Only the
+    protocol-specific registers and the M_CMD opcodes differ.
+  - **GENI SPI facts (verified from `drivers/spi/spi-geni-qcom.c`, v6.19, via
+    codebrowser.dev — not from memory):** M_CMD opcodes are `TX_ONLY 1`,
+    `RX_ONLY 2`, `TX_RX 7`, `CS_ASSERT 8`, `CS_DEASSERT 9`, `SCK_ONLY 10`;
+    params bits `PRE_CMD_DELAY 1<<0`, `TIMESTAMP_BEFORE 1<<1`,
+    `FRAGMENTATION 1<<2` (keep CS asserted), `TIMESTAMP_AFTER 1<<3`,
+    `POST_CMD_DELAY 1<<4`; Linux always passes `FRAGMENTATION` for data
+    transfers. SPI registers: `SE_SPI_CPHA 0x224`, `SE_SPI_LOOPBACK 0x22c`,
+    `SE_SPI_CPOL 0x230`, `SE_SPI_DEMUX_OUTPUT_INV 0x24c`, `SE_SPI_DEMUX_SEL
+    0x250`, `SE_SPI_TRANS_CFG 0x25c` (`CS_TOGGLE 1<<1`, cleared because CS is
+    driven manually), `SE_SPI_WORD_LEN 0x268` (`bits_per_word - 4`),
+    `SE_SPI_TX_TRANS_LEN 0x26c`, `SE_SPI_RX_TRANS_LEN 0x270`,
+    `SE_SPI_PRE_POST_CMD_DLY 0x274`, `SE_SPI_DELAY_COUNTERS 0x278`. Transfer
+    lengths are in **SPI words**, i.e. bytes for 8-bit words. Clock: same pair
+    the I2C path already writes — `SE_GENI_CLK_SEL 0x7c` (index) and
+    `GENI_SER_M_CLK_CFG 0x48` (`(div << 4) | SER_CLK_EN`, where the existing
+    code's `SE_MCLK` is that register). Packing is the same
+    `geni_se_config_packing(8, 4, msb_first, true, true)` call the I2C path
+    already sets up.
+  - Not yet verified: (a) the `SE_GENI_FW_REVISION` proto id for SPI — the
+    existing check accepts only `3` (observed on the working I2C SE2), so the
+    fog branch must not reuse it as a hard gate; (b) GENI SPI pin mux for
+    `qupv3_se0_spi` (pin numbers + function) — not in our generated ADT, so
+    either add it to `tools/mkadt.py` or hardcode and print diagnostics;
+    (c) the Novatek SPI framing (read/write command bytes, fast-read address
+    `0x3f310`, `swrst-n8-addr 0x3f0fe`) — the vendor `NVT-ts` source is not
+    on this machine. `probe/fog-live/dmesg.txt` only has post-boot NVT lines,
+    not probe time (useful evidence: report frames are ~66+ bytes with the
+    checksum at `point_data[65]`).
+  - Reference kernel for reading the vendor driver: `Jabiyeff/kernel_xiaomi_sm6225`
+    (branches `15.0`/`16.0`, `spes-r-oss`) is the tree the spes port used; its
+    `drivers/input/touchscreen/` has `focaltech_touch`, `ft3418_i2c`,
+    `nt36xxx`, `synaptics_*`, `xiaomi`, but **no novatek directory** — the
+    khaje Novatek driver must be fetched from another vendor tree (look for
+    `novatek/nvt_ts.c`, `nvt_spi.c` and the `spi-rd-fast-addr` DT property).
+  - Planned shape of the driver change: keep the whole existing file intact
+    for spes/topaz, add `st.fog` from `/fog-platform`, and in `touch_thread`
+    branch to a fog path that maps SE0, votes the SE0 clocks, muxes the SPI
+    pins, pulses reset GPIO86, then runs Novatek probe/report reads over
+    GENI SPI with CS_ASSERT / TX / RX / CS_DEASSERT. Rich `printf` of every
+    register on the way is deliberate: the only feedback channel on the phone
+    is the panel.
 - **MILESTONE 2026-10-22 19:49 local — RAM-only diagnostic boots to PID 1 on
   the live `rain` handset.** `fastboot boot shim/out/rain-diagnostic.img`
   (17,440,768 bytes, sha256 `eeec115c…bed8b`) showed the shim `sweet
