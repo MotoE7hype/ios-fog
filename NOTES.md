@@ -47,12 +47,10 @@
   to get a log without USB (`sweetlog=1` writes a ring at the end of the iOS
   root; only readable by booting TWRP/`fastboot boot` again).
 - **MILESTONE 2026-10-23 — SpringBoard reached; display-scale + touch-mapping
-  patch written and verified (not yet built/booted).** The user reports the
+  patch written and verified (built/booted).** The user reports the
   home screen is up ("red 4:20"), so Apple's userland reaches SpringBoard on
-  the fog display path. The user then reported display scaling and touch are
-  broken, which is expected: the panel is 720x1650 while iOS renders into a
-  1125x2436 logical canvas, and `present()` was a centre-crop memcpy with no
-  resample, while `SweetHID` mapped contacts against a hardcoded 1080x2400.
+  the fog display path. Display scaling and touch were broken (panel 720x1650
+  vs iOS 1125x2436 logical canvas; centre-crop memcpy, HID mapped to 1080x2400).
   - `xnu/patches/0100-sweet-fb-present-scale.patch` (new, 13,416 bytes, LF,
     applies cleanly and byte-reproduces the edited sources): adds
     `AppleCLCD::presentScaled/presentLayer/blend` (point-sampled box resample,
@@ -75,13 +73,14 @@
     (`0031`/`0041`) that need `0026-stage-hfs.sh`. `python -m unittest
     discover -s tests` is 28 pass + 1 pre-existing Windows-only error
     (`os.chown` mock, unrelated).
-  - **Not yet done**: rebuild on the Mac, `fastboot boot shim/out/rain-ios.img`,
-    and photograph the result to confirm the canvas fills the panel and taps
-    land where they should. Touch itself still cannot work: the inherited
-    `sweet_touch.c` is spes' QUP SE2 **I2C** driver and fog's digitizer is
-    Novatek **SPI** on QUPv3 SE0, so `FOG_TOUCH=1` sends coordinates from a
-    transport that never arrives. The mapping above is what makes those
-    coordinates land correctly once the SPI port exists.
+  - **Update 2026-10-23:** Booted from a flashed boot image on the device to
+    the lock/screen with time showing (SpringBoard up). Scaling fix landed;
+    touch mapping is ready but the transport is still missing.
+  - **Touch status:** inherited `sweet_touch.c` is spes' QUP SE2 **I2C** driver
+    and fog's digitizer is Novatek **SPI** on QUPv3 SE0, so `FOG_TOUCH=1` sends
+    coordinates from a transport that never arrives. The mapping above makes
+    those coordinates land correctly once the SPI port exists. Porting Novatek
+    SPI for QUPv3 SE0 is in progress.
 - **Dual boot**: possible and asked about by the user (decision deferred,
   "not now, just tell me if it works"). Facts: LUN0 is 53.5 GiB with
   `userdata` = 42.6 GiB (the iOS root) and `super` = 8.5 GiB (6.4 used);
