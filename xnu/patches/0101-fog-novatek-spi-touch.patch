@@ -1,6 +1,77 @@
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -87,7 +87,7 @@
+@@ -23,6 +23,10 @@
+ #include "sweet_sqe.h"
+ #include "sweet_zap.h"
+ 
++#ifndef BIT
++#define BIT(n) (1u << (n))
++#endif
++
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+@@ -45,6 +49,59 @@
+ #define TOUCH_GPIO_IO(n)  (TOUCH_GPIO_CFG(n) + 4u)
+ #define TOUCH_MAX        10u
+ #define TOUCH_GOODIX     1
++
++/* fog/rain/wind */
++#define FOG_SE_PA        0x04a80000u
++#define FOG_GCC_SE0_RCG  0x1f148u
++#define FOG_GCC_SE0_CBCR 0x1f144u
++#define FOG_GCC_WRAP_VOTE 0x13c0u
++#define FOG_GCC_SE0_VOTE  0x0400u
++#define FOG_PIN_RESET    86u
++#define FOG_PIN_IRQ      80u
++#define FOG_SPI_HZ       9600000u
++#define FOG_PANEL_W      720u
++#define FOG_PANEL_H      1650u
++
++#define SE_SPI_CPHA      0x224u
++#define SE_SPI_CPOL      0x230u
++#define SE_SPI_TRANS_CFG 0x25cu
++#define SE_SPI_WORD_LEN  0x268u
++#define SE_SPI_TX_TRANS_LEN 0x26cu
++#define SE_SPI_RX_TRANS_LEN 0x270u
++#define SE_SPI_DELAY     0x278u
++#define SE_GENI_OUTPUT_CTRL 0x24u
++#define SE_GENI_CFG_REG  0x254u
++#define SE_GENI_CFG_SEQ_START 0x84u
++#define SE_GENI_TX_PACK0 0x260u
++#define SE_GENI_TX_PACK1 0x264u
++#define SE_GENI_RX_PACK0 0x284u
++#define SE_GENI_RX_PACK1 0x288u
++#define SE_GENI_CLK_CTRL 0x48u
++#define SE_GENI_IO_MUX_0_EN (1u << 0)
++#define SPI_TX_ONLY      (1u << 0)
++#define SPI_RX_ONLY      (1u << 1)
++#define M_CMD_DONE_EN    (1u << 0)
++#define M_CMD_OVERRUN_EN (1u << 1)
++#define M_ILLEGAL_CMD_EN (1u << 2)
++#define M_CMD_FAILURE_EN (1u << 3)
++#define M_CMD_CANCEL_EN  (1u << 4)
++#define M_CMD_ABORT_EN   (1u << 5)
++#define M_RX_FIFO_WR_ERR_EN (1u << 25)
++#define M_TX_FIFO_WR_ERR_EN (1u << 29)
++#define M_RX_FIFO_RD_ERR_EN (1u << 24)
++#define M_TX_FIFO_RD_ERR_EN (1u << 28)
++
++#define NVT_SPI_WRITE_MASK(a) ((a) | 0x80)
++#define NVT_SPI_READ_MASK(a)  ((a) & 0x7F)
++#define NVT_PAGE_CMD          0xFF
++#define NVT_DUMMY_BYTES       1
++#define NVT_POINT_DATA_LEN    78
++#define NVT_EVENT_MAP_RESET_COMPLETE 0x60
++#define NVT_EVENT_MAP_PROJECTID      0x9A
++#define NVT_EVENT_MAP_FWINFO         0x78
++#define NVT_RESET_STATE_REK          2
++#define NVT_RESET_STATE_REK_FINISH   3
++#define NVT_RESET_STATE_NORMAL_RUN   4
+ #define TOUCH_FTS        2
+ /* GT9896 is Yellowstone in Xiaomi sweet-r-oss, not the Berlin protocol. */
+ #define GOODIX_PID_REG   0x4022u
+@@ -87,7 +144,7 @@
  
  static struct {
  	vm_offset_t se, gcc, west, east;
@@ -9,12 +80,42 @@
  	bool started, dead, probing;
  	int kind, irq_hint;
  	uint32_t irq_status, irq_last, active;
-@@ -1702,6 +1702,8 @@
+@@ -179,6 +236,14 @@
+ 	 * shared vote register (other bits belong to other clients), XO parent
+ 	 * with divider 1 = 19.2 MHz, no PLL or voltage change.
+ 	 */
++	if (st.fog) {
++		touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | FOG_GCC_WRAP_VOTE | FOG_GCC_SE0_VOTE);
++		touch_wr(st.gcc, FOG_GCC_SE0_RCG + 4u, 1u);
++		touch_wr(st.gcc, FOG_GCC_SE0_RCG, touch_rd(st.gcc, FOG_GCC_SE0_RCG) | 1u);
++		if (!touch_wait_clear(st.gcc, FOG_GCC_SE0_RCG, 1u)) return false;
++		if (!touch_wait_clear(st.gcc, FOG_GCC_SE0_CBCR, 1u << 31)) return false;
++		return true;
++	}
+ 	touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | 0x13c0u);
+ 	printf("SWEET TOUCH: gcc vote=%#x rcg=%#x cfg=%#x cbcr=%#x\n",
+ 	    touch_rd(st.gcc, TOUCH_GCC_VOTE), touch_rd(st.gcc, TOUCH_RCG),
+@@ -1569,9 +1634,9 @@
+ 	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
+ 	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
+ 	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
+-	st.east = ml_io_map(st.spes ? 0x00900000u : TOUCH_EAST_PA,
+-	    st.spes ? 0x99000 : 0x25000);
+-	st.se = ml_io_map(TOUCH_SE_PA, 0x4000);
++	st.east = ml_io_map((st.spes || st.fog) ? 0x00900000u : TOUCH_EAST_PA,
++	    (st.spes || st.fog) ? 0x99000 : 0x25000);
++	st.se = ml_io_map(st.fog ? FOG_SE_PA : TOUCH_SE_PA, 0x4000);
+ 	if (!st.gcc || !st.west || !st.east || !st.se) {
+ 		printf("SWEET TOUCH: MMIO mapping failed\n");
+ 		goto out;
+@@ -1702,7 +1767,9 @@
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
+-	if (st.spes) enabled = 0; /* opt in after initial boot diagnostics */
 +	st.fog = SecureDTLookupEntry(NULL, "/fog-platform", &platform) == kSuccess;
-+	st.fog = SecureDTLookupEntry(NULL, "/fog-platform", &platform) == kSuccess;
- 	if (st.spes) enabled = 0; /* opt in after initial boot diagnostics */
++	if (st.spes || st.fog) enabled = 0; /* opt in after initial boot diagnostics */
++	if (st.fog) { touch_clocks(); }
  	st.started = true;
  	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
+ 	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
