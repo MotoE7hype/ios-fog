@@ -14,23 +14,23 @@
  
  extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  
-@@ -85,9 +92,69 @@
+@@ -85,9 +92,65 @@
  #define SE_PACK0        0x0007f8feu
  #define SE_PACK1        0x000ffefeu
  
 +/* fog/rain/wind (khaje): Novatek NVT-ts-spi on QUPv3 SE0 */
 +#define FOG_SE_PA        0x04a80000u
-+#define FOG_GCC_SE0_RCG  0x1f148u
++#define FOG_GCC_SE0_RCG  0x1f148u    /* gcc-qupv3_wrap0_s0_clk_src */
 +#define FOG_GCC_SE0_CBCR 0x1f144u
 +#define FOG_GCC_WRAP_VOTE 0x13c0u
-+#define FOG_GCC_SE0_VOTE  0x0400u
++#define FOG_GCC_SE0_VOTE  0x0400u    /* bit 10 */
 +#define FOG_PIN_RESET    86u
 +#define FOG_PIN_IRQ      80u
 +#define FOG_SPI_HZ       9600000u
 +#define FOG_PANEL_W      720u
 +#define FOG_PANEL_H      1650u
 +
-+/* GENI SPI (minimal) */
++/* SPI serial engine */
 +#define SE_SPI_CPHA      0x224u
 +#define SE_SPI_CPOL      0x230u
 +#define SE_SPI_TRANS_CFG 0x25cu
@@ -47,10 +47,8 @@
 +#define SE_GENI_RX_PACK1 0x288u
 +#define SE_GENI_CLK_CTRL 0x48u
 +#define SE_GENI_IO_MUX_0_EN (1u << 0)
-+
 +#define SPI_TX_ONLY      (1u << 0)
 +#define SPI_RX_ONLY      (1u << 1)
-+
 +#define M_CMD_DONE_EN    (1u << 0)
 +#define M_CMD_OVERRUN_EN (1u << 1)
 +#define M_ILLEGAL_CMD_EN (1u << 2)
@@ -61,8 +59,6 @@
 +#define M_TX_FIFO_WR_ERR_EN (1u << 29)
 +#define M_RX_FIFO_RD_ERR_EN (1u << 24)
 +#define M_TX_FIFO_RD_ERR_EN (1u << 28)
-+
-+#define GENI_M_CMD_OPCODE_SHIFT 27
 +
 +/* Novatek SPI index-page protocol */
 +#define NVT_SPI_WRITE_MASK(a) ((a) | 0x80)
@@ -85,7 +81,7 @@
  	bool started, dead, probing;
  	int kind, irq_hint;
  	uint32_t irq_status, irq_last, active;
-@@ -174,6 +241,24 @@
+@@ -174,6 +237,24 @@
  static bool
  touch_clocks(void)
  {
@@ -110,7 +106,7 @@
  	/*
  	 * topaz (TopazTouch hwio.c): OR the QUP0 wrapper/SE2 votes into the
  	 * shared vote register (other bits belong to other clients), XO parent
-@@ -608,6 +693,199 @@
+@@ -608,6 +689,199 @@
  	return true;
  }
  
@@ -310,7 +306,7 @@
  /* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
   * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
   * or PMIC request is taken until the inherited bootloader state is known.
-@@ -1565,28 +1843,111 @@
+@@ -1565,28 +1839,111 @@
  	touch_wait(delay_s * 1000u);
  	if (st.spes && st.diag == 3) spes_rpm_inspect();
  	st.stage = "map";
@@ -431,7 +427,7 @@
  	printf("SWEET TOUCH: TLMM reset=%#x irq=%#x avdd=%#x\n",
  	    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_RESET)),
  	    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)),
-@@ -1646,7 +2007,7 @@
+@@ -1646,7 +2003,7 @@
  			    st.s_frames, st.s_errs, st.s_down, st.s_up,
  			    st.s_lastx, st.s_lasty, st.active);
  		}
@@ -440,7 +436,7 @@
  			panic("SWEET TOUCH stats: frames=%u errs=%u lasterr=%d maxn=%u hid down=%u up=%u last=%d,%d | "
  			    "raw %02x %02x %02x | %02x %02x %02x %02x %02x %02x | %02x %02x %02x",
  			    st.s_frames, st.s_errs, st.s_lasterr, st.s_maxn, st.s_down, st.s_up,
-@@ -1654,7 +2015,6 @@
+@@ -1654,7 +2011,6 @@
  			    st.s_raw[3], st.s_raw[4], st.s_raw[5], st.s_raw[6], st.s_raw[7],
  			    st.s_raw[8], st.s_raw[9], st.s_raw[10], st.s_raw[11]);
  		}
@@ -448,7 +444,7 @@
  		if (!st.irq_hint || st.active ||
  		    !(touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)) & 1u) ||
  		    (++ticks % 10u) == 0) {
-@@ -1666,7 +2026,7 @@
+@@ -1666,7 +2022,7 @@
  					printf("SWEET TOUCH: report err=%d irq=%#x\n", err, st.irq_status);
  				}
  				if (errors == 10) {
@@ -457,7 +453,7 @@
  				}
  			} else {
  				errors = 0;
-@@ -1702,10 +2062,11 @@
+@@ -1702,10 +2058,11 @@
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
