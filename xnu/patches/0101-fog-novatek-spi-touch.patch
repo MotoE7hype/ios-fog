@@ -14,24 +14,23 @@
  
  extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  
-@@ -85,9 +92,71 @@
+@@ -85,9 +92,69 @@
  #define SE_PACK0        0x0007f8feu
  #define SE_PACK1        0x000ffefeu
  
 +/* fog/rain/wind (khaje): Novatek NVT-ts-spi on QUPv3 SE0 */
 +#define FOG_SE_PA        0x04a80000u
-+#define FOG_GCC_SE0_RCG  0x1f148u    /* gcc-qupv3_wrap0_s0_clk_src */
++#define FOG_GCC_SE0_RCG  0x1f148u
 +#define FOG_GCC_SE0_CBCR 0x1f144u
 +#define FOG_GCC_WRAP_VOTE 0x13c0u
-+#define FOG_GCC_SE0_VOTE  0x0400u    /* bit 10 */
++#define FOG_GCC_SE0_VOTE  0x0400u
 +#define FOG_PIN_RESET    86u
 +#define FOG_PIN_IRQ      80u
-+#define FOG_PIN_AVDD     98u
 +#define FOG_SPI_HZ       9600000u
 +#define FOG_PANEL_W      720u
 +#define FOG_PANEL_H      1650u
 +
-+/* SPI serial engine */
++/* GENI SPI (minimal) */
 +#define SE_SPI_CPHA      0x224u
 +#define SE_SPI_CPOL      0x230u
 +#define SE_SPI_TRANS_CFG 0x25cu
@@ -41,31 +40,29 @@
 +#define SE_SPI_DELAY     0x278u
 +#define SE_GENI_OUTPUT_CTRL 0x24u
 +#define SE_GENI_CFG_REG  0x254u
++#define SE_GENI_CFG_SEQ_START 0x84u
 +#define SE_GENI_TX_PACK0 0x260u
 +#define SE_GENI_TX_PACK1 0x264u
 +#define SE_GENI_RX_PACK0 0x284u
 +#define SE_GENI_RX_PACK1 0x288u
 +#define SE_GENI_CLK_CTRL 0x48u
-+#define SE_GENI_M_IRQ_EN_REG 0x614u
-+#define SE_GENI_M_IRQ_CLR_REG 0x618u
-+#define SE_GENI_TX_FIFO_STATUS 0x800u
-+#define SE_GENI_RX_FIFO_STATUS 0x804u
-+#define SE_GENI_TX_WATERMARK 0x80cu
-+#define SE_GENI_RX_WATERMARK 0x810u
-+#define SE_GENI_RX_RFR_WATERMARK 0x814u
-+#define SE_GENI_M_GP_LENGTH_REG 0x910u
 +#define SE_GENI_IO_MUX_0_EN (1u << 0)
-+#define GENI_M_COMMON_IRQ_EN (M_CMD_DONE_EN | M_CMD_OVERRUN_EN | M_CMD_FAILURE_EN | M_CMD_CANCEL_EN | M_CMD_ABORT_EN | M_ILLEGAL_CMD_EN)
-+#define M_RX_FIFO_WM_EN BIT(26)
-+#define M_RX_FIFO_LAST_EN BIT(27)
-+#define M_TX_FIFO_WM_EN BIT(30)
-+#define M_TX_FIFO_RD_ERR_EN BIT(28)
-+#define M_RX_FIFO_RD_ERR_EN BIT(24)
-+#define M_RX_FIFO_WR_ERR_EN BIT(25)
-+#define M_TX_FIFO_WR_ERR_EN BIT(29)
-+#define M_RX_FIFO_NOT_EMPTY_EN BIT(7)
-+#define RX_LAST_BYTE_VALID_MSK GENMASK(30, 28)
-+#define RX_LAST_BYTE_VALID_SHFT 28
++
++#define SPI_TX_ONLY      (1u << 0)
++#define SPI_RX_ONLY      (1u << 1)
++
++#define M_CMD_DONE_EN    (1u << 0)
++#define M_CMD_OVERRUN_EN (1u << 1)
++#define M_ILLEGAL_CMD_EN (1u << 2)
++#define M_CMD_FAILURE_EN (1u << 3)
++#define M_CMD_CANCEL_EN  (1u << 4)
++#define M_CMD_ABORT_EN   (1u << 5)
++#define M_RX_FIFO_WR_ERR_EN (1u << 25)
++#define M_TX_FIFO_WR_ERR_EN (1u << 29)
++#define M_RX_FIFO_RD_ERR_EN (1u << 24)
++#define M_TX_FIFO_RD_ERR_EN (1u << 28)
++
++#define GENI_M_CMD_OPCODE_SHIFT 27
 +
 +/* Novatek SPI index-page protocol */
 +#define NVT_SPI_WRITE_MASK(a) ((a) | 0x80)
@@ -76,6 +73,7 @@
 +#define NVT_EVENT_MAP_RESET_COMPLETE 0x60
 +#define NVT_EVENT_MAP_PROJECTID      0x9A
 +#define NVT_EVENT_MAP_FWINFO         0x78
++#define NVT_EVENT_MAP_HANDSHAKING    0x51
 +#define NVT_RESET_STATE_REK          2
 +#define NVT_RESET_STATE_REK_FINISH   3
 +#define NVT_RESET_STATE_NORMAL_RUN   4
@@ -87,7 +85,7 @@
  	bool started, dead, probing;
  	int kind, irq_hint;
  	uint32_t irq_status, irq_last, active;
-@@ -174,6 +243,24 @@
+@@ -174,6 +241,24 @@
  static bool
  touch_clocks(void)
  {
@@ -112,7 +110,7 @@
  	/*
  	 * topaz (TopazTouch hwio.c): OR the QUP0 wrapper/SE2 votes into the
  	 * shared vote register (other bits belong to other clients), XO parent
-@@ -608,6 +695,237 @@
+@@ -608,6 +693,199 @@
  	return true;
  }
  
@@ -120,14 +118,13 @@
 +fog_gpio_init(void)
 +{
 +	vm_offset_t west = st.west;
-+	vm_offset_t east = st.east;
 +	if (west) {
 +		/* IRQ input, pull up */
 +		uint32_t off = TOUCH_GPIO_CFG(FOG_PIN_IRQ);
 +		uint32_t cfg = touch_rd(west, off);
 +		touch_wr(west, TOUCH_GPIO_IO(FOG_PIN_IRQ), touch_rd(west, TOUCH_GPIO_IO(FOG_PIN_IRQ)) & ~2u);
 +		cfg &= ~0x3ffu;
-+		cfg |= (0 << 2) | 3 | (3 << 6); /* in, pull up */
++		cfg |= (0 << 2) | 3 | (3 << 6);
 +		touch_wr(west, off, cfg);
 +		/* reset low then high */
 +		off = TOUCH_GPIO_CFG(FOG_PIN_RESET);
@@ -136,15 +133,6 @@
 +		cfg &= ~0x3ffu;
 +		cfg |= (0 << 2) | 3 | (3 << 6) | 0x200u;
 +		touch_wr(west, off, cfg);
-+	}
-+	if (east) {
-+		uint32_t off = TOUCH_GPIO_CFG(FOG_PIN_AVDD);
-+		uint32_t cfg = touch_rd(east, off);
-+		touch_wr(east, TOUCH_GPIO_IO(FOG_PIN_AVDD), (touch_rd(east, TOUCH_GPIO_IO(FOG_PIN_AVDD)) & ~2u) | 2u);
-+		cfg &= ~0x3ffu;
-+		cfg |= (0 << 2) | 3 | (3 << 6) | 0x200u;
-+		if (cfg & (1u << 11)) cfg |= 1u << 12;
-+		touch_wr(east, off, cfg);
 +	}
 +}
 +
@@ -155,20 +143,19 @@
 +	uint32_t fw = touch_rd(se, SE_FW);
 +	printf("SWEET TOUCH: fog se0 fw=%#x proto=%u status=%#x\n", fw, (fw >> 8) & 0xffu, touch_rd(se, SE_STATUS));
 +	if (((fw >> 8) & 0xffu) != 1u) {
-+		/* try to proceed anyway */
 +		printf("SWEET TOUCH: fog se0 proto!=1, attempting SPI init anyway\n");
 +	}
 +	touch_wr(se, 0x648, 0xffffffffu);
-+	touch_wr(se, SE_GENI_M_IRQ_EN_REG, 0);
-+	touch_wr(se, SE_GENI_M_IRQ_CLR_REG, 0xffffffffu);
++	touch_wr(se, SE_IRQ_EN, 0);
++	touch_wr(se, SE_IRQ_CLR, 0xffffffffu);
 +	touch_wr(se, SE_GENI_OUTPUT_CTRL, SE_GENI_IO_MUX_0_EN | 0x7e);
 +	touch_wr(se, SE_DMA, 0);
 +	touch_wr(se, SE_GENI_CFG_SEQ_START, 1);
 +	touch_wait(1);
 +	touch_wr(se, SE_GENI_CFG_SEQ_START, 0);
-+	touch_wr(se, SE_GENI_CLK_SEL, 0);
++	touch_wr(se, SE_CLK_SEL, 0);
 +	touch_wr(se, SE_GENI_CLK_CTRL, (2u << 4) | 1u);
-+	touch_wr(se, SE_SPI_TRANS_CFG, touch_rd(se, SE_SPI_TRANS_CFG) & ~BIT(1));
++	touch_wr(se, SE_SPI_TRANS_CFG, touch_rd(se, SE_SPI_TRANS_CFG) & ~2u);
 +	touch_wr(se, SE_SPI_CPHA, 0);
 +	touch_wr(se, SE_SPI_CPOL, 0);
 +	touch_wr(se, SE_GENI_CFG_REG, 0);
@@ -182,7 +169,7 @@
 +	touch_wr(se, SE_GENI_RX_RFR_WATERMARK, ((touch_rd(se, SE_HW_RX) >> 16) & 0x3fu) - 2u);
 +	touch_wr(se, SE_SPI_DELAY, 0);
 +	uint32_t irq = M_CMD_DONE_EN | M_CMD_FAILURE_EN | M_CMD_OVERRUN_EN | M_ILLEGAL_CMD_EN | M_CMD_CANCEL_EN | M_CMD_ABORT_EN | M_TX_FIFO_WR_ERR_EN | M_RX_FIFO_WR_ERR_EN | M_RX_FIFO_RD_ERR_EN;
-+	touch_wr(se, SE_GENI_M_IRQ_EN_REG, irq);
++	touch_wr(se, SE_IRQ_EN, irq);
 +	return true;
 +}
 +
@@ -195,23 +182,23 @@
 +		st.dead = true;
 +		return EBUSY;
 +	}
-+	touch_wr(se, SE_GENI_M_IRQ_CLR_REG, 0xffffffffu);
++	touch_wr(se, SE_IRQ_CLR, 0xffffffffu);
 +	unsigned words = nt >= nr ? (nt + 3u) / 4u : (nr + 3u) / 4u;
 +	if (!words) words = 1;
 +	touch_wr(se, SE_SPI_TX_TRANS_LEN, words);
 +	touch_wr(se, SE_SPI_RX_TRANS_LEN, words);
 +	uint32_t mcmd = 0;
-+	if (nt) mcmd |= SPI_TX_ONLY;
-+	if (nr) mcmd |= SPI_RX_ONLY;
-+	if (!nt && nr) mcmd = SPI_RX_ONLY;
-+	if (nt && nr) mcmd = SPI_TX_ONLY | SPI_RX_ONLY;
-+	touch_wr(se, SE_GENI_M_CMD0, ((mcmd & 0xfu) << 27));
++	if (nt && !nr) mcmd = SPI_TX_ONLY;
++	else if (nr && !nt) mcmd = SPI_RX_ONLY;
++	else if (nt && nr) mcmd = SPI_TX_ONLY | SPI_RX_ONLY;
++	else return 0;
++	touch_wr(se, SE_CMD, ((mcmd & 0xfu) << GENI_M_CMD_OPCODE_SHIFT));
 +	touch_wr(se, SE_GENI_TX_WATERMARK, 0);
 +	unsigned sent = 0, got = 0;
 +	for (unsigned i = 0; i < 5000; ++i) {
-+		uint32_t irq = touch_rd(se, SE_GENI_M_IRQ_STATUS);
++		uint32_t irq = touch_rd(se, SE_IRQ);
 +		if (irq) {
-+			touch_wr(se, SE_GENI_M_IRQ_CLR_REG, irq);
++			touch_wr(se, SE_IRQ_CLR, irq);
 +			if (irq & (M_CMD_FAILURE_EN | M_CMD_OVERRUN_EN | M_ILLEGAL_CMD_EN)) {
 +				touch_abort();
 +				return EIO;
@@ -221,14 +208,13 @@
 +			uint32_t word = 0;
 +			for (unsigned j = 0; j < 4 && sent + j < nt; ++j)
 +				word |= (uint32_t)tx[sent + j] << (8u * j);
-+			touch_wr(se, SE_GENI_TX_FIFOn, word);
++			touch_wr(se, SE_TX, word);
 +			sent += 4;
 +		}
-+		if (irq & M_RX_FIFO_WM_EN) {
-+			uint32_t rstat = touch_rd(se, SE_GENI_RX_FIFO_STATUS);
-+			uint32_t rc = rstat & 0x1ffffffu;
++		if (irq & SE_RX_WM_IRQ) {
++			uint32_t rc = touch_rd(se, SE_RX_COUNT) & 0x1ffffffu;
 +			for (unsigned k = 0; k < rc; ++k) {
-+				uint32_t word = touch_rd(se, SE_GENI_RX_FIFOn);
++				uint32_t word = touch_rd(se, SE_RX);
 +				for (unsigned b = 0; b < 4 && rx; ++b) {
 +					unsigned idx = got++;
 +					if (idx < nr)
@@ -236,17 +222,14 @@
 +				}
 +			}
 +		}
-+		if (irq & M_CMD_DONE_EN) {
-+			break;
-+		}
++		if (irq & M_CMD_DONE_EN) break;
 +		delay(1);
 +	}
-+	for (unsigned j = 0; j < 4096 && got < nr + 32 && rx; ++j) {
-+		uint32_t rstat = touch_rd(se, SE_GENI_RX_FIFO_STATUS);
-+		uint32_t rc = rstat & 0x1ffffffu;
++	for (unsigned j = 0; j < 2048 && got < nr && rx; ++j) {
++		uint32_t rc = touch_rd(se, SE_RX_COUNT) & 0x1ffffffu;
 +		if (!rc) break;
 +		for (unsigned k = 0; k < rc; ++k) {
-+			uint32_t word = touch_rd(se, SE_GENI_RX_FIFOn);
++			uint32_t word = touch_rd(se, SE_RX);
 +			for (unsigned b = 0; b < 4; ++b) {
 +				unsigned idx = got++;
 +				if (idx < nr)
@@ -278,18 +261,18 @@
 +{
 +	if (!len) return 0;
 +	uint32_t page = addr & ~0x7Fu;
-+	if ((page != (addr + len - 1) & ~0x7Fu)) {
-+		/* simple: handle one page */
-+	}
 +	int err = nvt_set_page(page);
 +	if (err) return err;
 +	uint8_t xbuf[64], rbuf[64];
 +	memset(xbuf, 0, sizeof(xbuf));
++	memset(rbuf, 0, sizeof(rbuf));
 +	xbuf[0] = NVT_SPI_READ_MASK((uint8_t)(addr & 0x7F));
-+	for (unsigned i = 1; i < len + 1 + NVT_DUMMY_BYTES && i < sizeof(xbuf); ++i) xbuf[i] = 0;
-+	err = fog_spi_xfer(xbuf, len + 1 + NVT_DUMMY_BYTES, rbuf, len + 1 + NVT_DUMMY_BYTES);
++	unsigned n = len + 1 + NVT_DUMMY_BYTES;
++	if (n > sizeof(xbuf)) n = sizeof(xbuf);
++	memset(xbuf + 1, 0, n - 1);
++	err = fog_spi_xfer(xbuf, n, rbuf, n);
 +	if (err) return err;
-+	for (unsigned i = 0; i < len && i + 2 < sizeof(rbuf); ++i) buf[i] = rbuf[i + 2];
++	for (unsigned i = 0; i < len && i + 2 < n; ++i) buf[i] = rbuf[i + 2];
 +	return 0;
 +}
 +
@@ -306,30 +289,7 @@
 +	return fog_spi_xfer(xbuf, 1 + len, NULL, 0);
 +}
 +
-+static int
-+nvt_clear_fw_status(uint32_t buf_addr)
-+{
-+	uint8_t b[2];
-+	for (int i = 0; i < 20; ++i) {
-+		uint32_t a = buf_addr | NVT_EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE;
-+		/* use handshaking */
-+		nvt_set_page(buf_addr & ~0x7Fu);
-+		/* write handshaking */
-+		uint8_t wb[2] = {NVT_SPI_WRITE_MASK((uint8_t)(0x51)), 0x00};
-+		uint8_t rb[4];
-+		fog_spi_xfer(wb, 2, NULL, 0);
-+		uint8_t rb2[2] = {NVT_SPI_READ_MASK((uint8_t)0x51), 0};
-+		if (!fog_spi_xfer(rb2, 3, rb, 3)) {
-+			if (rb[2] == 0x00) return 0;
-+		}
-+		touch_wait(10);
-+	}
-+	return EIO;
-+}
 +
-+#ifndef NVT_EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE
-+#define NVT_EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE 0x51
-+#endif
 +
 +static int
 +nvt_read_report(uint32_t buf_addr, uint8_t *rbuf, unsigned len)
@@ -350,7 +310,7 @@
  /* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
   * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
   * or PMIC request is taken until the inherited bootloader state is known.
-@@ -1565,28 +1883,111 @@
+@@ -1565,28 +1843,111 @@
  	touch_wait(delay_s * 1000u);
  	if (st.spes && st.diag == 3) spes_rpm_inspect();
  	st.stage = "map";
@@ -471,7 +431,7 @@
  	printf("SWEET TOUCH: TLMM reset=%#x irq=%#x avdd=%#x\n",
  	    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_RESET)),
  	    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)),
-@@ -1646,7 +2047,7 @@
+@@ -1646,7 +2007,7 @@
  			    st.s_frames, st.s_errs, st.s_down, st.s_up,
  			    st.s_lastx, st.s_lasty, st.active);
  		}
@@ -480,7 +440,7 @@
  			panic("SWEET TOUCH stats: frames=%u errs=%u lasterr=%d maxn=%u hid down=%u up=%u last=%d,%d | "
  			    "raw %02x %02x %02x | %02x %02x %02x %02x %02x %02x | %02x %02x %02x",
  			    st.s_frames, st.s_errs, st.s_lasterr, st.s_maxn, st.s_down, st.s_up,
-@@ -1654,7 +2055,6 @@
+@@ -1654,7 +2015,6 @@
  			    st.s_raw[3], st.s_raw[4], st.s_raw[5], st.s_raw[6], st.s_raw[7],
  			    st.s_raw[8], st.s_raw[9], st.s_raw[10], st.s_raw[11]);
  		}
@@ -488,7 +448,7 @@
  		if (!st.irq_hint || st.active ||
  		    !(touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)) & 1u) ||
  		    (++ticks % 10u) == 0) {
-@@ -1666,7 +2066,7 @@
+@@ -1666,7 +2026,7 @@
  					printf("SWEET TOUCH: report err=%d irq=%#x\n", err, st.irq_status);
  				}
  				if (errors == 10) {
@@ -497,7 +457,7 @@
  				}
  			} else {
  				errors = 0;
-@@ -1702,10 +2102,11 @@
+@@ -1702,10 +2062,11 @@
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
