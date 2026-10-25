@@ -21,8 +21,8 @@ Open issues:
 
 | Item | State |
 | --- | --- |
-| Touch | Implemented in patch `0101`: Novatek `NVT-ts` on QUPv3 **SE0 GENI SPI**, FIFO mode, split TX/RX commands with CS held across a register read. The patched image boots on the handset but touch does not respond yet. |
-| Touch-enabled build | The first `0101` **kernel-panicked** because it voted the GCC clocks before mapping them; the rewrite maps first, boots on the handset, and builds clean in CI. The RAM diagnostic printed no touch lines because `rd=md0` never reached the driver; `spes_touch_probe()` now covers that path (`4b5e4fd`, image from `fog-image` run `40233715136`), and that boot is still pending. |
+| Touch | Implemented in patch `0101`: Novatek `NVT-ts` on QUPv3 **SE0 GENI SPI**, FIFO mode, split TX/RX commands with CS held across a register read. The driver now reaches SE0 init properly on the handset; the panel has not produced a single contact yet. |
+| Touch-enabled build | The first `0101` **kernel-panicked** because it voted the GCC clocks before mapping them; the rewrite maps first and boots. Two diagnostic findings fixed since: `rd=md0` never reached the driver (`4b5e4fd`), and `GENI_IF_DISABLE_RO` bit 0 was wrongly treated as fatal although it only means the SE prefers GPI DMA (`dbf85c0`). New images: diagnostic `40235763865`, iOS rebuilt on the Mac. |
 | Display scaling | Patch `0100` fits the 1125x2436 canvas to the 720x1650 panel; confirmed on the handset. |
 | Keys, UFS, GPU, Wi-Fi, SMP | Inherited, unverified here. Keep `sweetkeys=0 sweethw=0` until each is tested. |
 
@@ -83,7 +83,7 @@ notes for the SPI work.
 
 `.github/workflows/xnu.yml` builds XNU on macOS runners (manual dispatch) and
 applies the whole patch series. Download the `xnu-kernel` artifact into
-`xnu/out`. The current `fog` tip built successfully in run `40233091354`.
+`xnu/out`. The current `fog` tip built successfully in run `40235249291`.
 
 No local toolchain is required for the boot images either:
 `.github/workflows/fog-image.yml` builds a diagnostic on `ubuntu-latest` from a

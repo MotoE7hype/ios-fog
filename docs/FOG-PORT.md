@@ -49,7 +49,7 @@ still be probed before booting.
 | Stays alive | the on-screen clock advances; no panic or crash during the run |
 | Display scaling | correct on the rewritten driver: the canvas is fitted to the panel |
 | Touch-enabled build (`0101`, rewritten) | boots, **no touch** |
-| RAM diagnostic with `sweettouch=1` | boots, but printed no touch lines (probe never ran, fixed below) |
+| RAM diagnostic with `sweettouch=1` | boots and reaches the driver; first run stopped at SE0 because of a wrong FIFO gate (fixed 2026-10-25) |
 
 The original panic came from the first version of `0101`: it called
 `touch_clocks()` from `sweet_touch_init()`, i.e. before the touch thread had
@@ -153,12 +153,22 @@ Linux `spi-geni-qcom.c`, `qcom-geni-se.c`, `geni-se.h` and the vendor
   `fog pins ...`, `fog fwinfo page=... fw=...`, `fog novatek page=...`, then
   `fog frames=... errors=...` every 500 polls with `sweettouchdiag=3`;
   `sweettouchdiag=2` panics after ~30 s with the same counters plus raw
-  bytes.
+  bytes. When the run ends, `SPES TOUCH: stopped at <stage> ...` is followed
+  by `SWEET TOUCH: fog diag ifdis=... fw=... status=... tx=... rx=...
+  gcc=.../.../...`, which carries the SE state for a photo.
 
 The driver stops instead of poking an unknown SE: it skips the probes when
-`0x68` proto != 1 (no SPI firmware), `0x64` bit 0 is set (FIFO interface
-disabled), or the SE reports busy / inherited FIFO data. Those prints are the
-first thing to read on the handset.
+`0x68` proto != 1 (no GENI SPI firmware), the SE reports busy, the packing
+registers do not read back, or the FIFOs hold inherited data. Those prints are
+the first thing to read on the handset.
+
+`GENI_IF_DISABLE_RO` (`0x64`) bit 0 is **not** one of those gates. It means the
+SE was set up for GPI DMA: Linux reads it the same way, prefers GPI and falls
+back to FIFO when no GPI channel is available. The driver prints
+`SE0 gpi-preferred (ifdis=1); using FIFO mode` and clears
+`SE_GENI_DMA_MODE_EN`, which is the FIFO selection. Treating the bit as fatal
+was a bug that stopped the first diagnostic boot before the pins were even
+configured (`dbf85c0`).
 
 ### Where the driver starts
 
@@ -173,10 +183,12 @@ be used to debug the transport without an iOS install.
 Test order with the phone in fastboot:
 
 1. `fastboot boot shim/out/rain-diagnostic-touch.img` (RAM only; built by
-   `fog-image` run `40233715136`). Expect `fog gcc`, `fog se0 fw/proto`,
+   `fog-image` run `40235763865`). Expect `fog gcc`, `fog se0 fw/proto`,
+   `fog gpi-preferred` (if the SE is DMA-configured), `fog spi mclk`,
    `fog pins`, `fog fwinfo`, `fog novatek page`, then
    `fog frames=... down=...` while touching.
-2. Only then boot the full iOS image (`rain-ios.img`) and test the lock screen.
+2. Only then boot the full iOS image (`rain-ios.img`, rebuilt on the Mac from
+   the same kernel) and test the lock screen.
 
 A hang after `fog gcc`/`fog se0` with no `fog pins` means the SE access itself
 blocks (clock vote or wrong SE instance); `fog pins` without transfers points at

@@ -1,5 +1,48 @@
 # ios-fog (fog/rain/wind) port — scaffolding + verified hardware, 2026-10-22
 
+## 2026-10-25 (night) — SE0 is GPI-preferred; the FIFO gate was wrong
+
+**Status: the driver now gets past SE0 init; next boot exercises pins/FWINFO and
+the report loop for the first time.**
+
+- **Handset result (user, RAM diagnostic)**: the last touch line was
+  `SPES TOUCH: stopped at fog se0 dead=0 id=00:00 errors=0/0`, with the reason
+  line `SWEET TOUCH: SE0 FIFO interface disabled; probes skipped`. So the
+  driver never reached pins, reset, FWINFO or polling; touching the panel could
+  not do anything.
+- **Diagnosis (code against Linux `spi-geni-qcom.c`)**: `GENI_IF_DISABLE_RO`
+  (`0x64`) bit 0 is **not** a fault. `spi-geni-qcom` reads the same bit as
+  "prefer GPI DMA" and, when it cannot get a GPI channel, warns and **falls
+  back to FIFO mode** (`geni_se_select_mode(GENI_SE_FIFO)` = clear
+  `SE_GENI_DMA_MODE_EN`). The old gate treated it as fatal. The `fog se0` line
+  also proves `SE_FW` proto was 1, i.e. SE0 does have GENI SPI firmware - that
+  part was always fine.
+- **Fix (`dbf85c0`)**: `touch_fog_se_init()` now prints
+  `SE0 gpi-preferred (ifdis=1); using FIFO mode` and continues; the FIFO
+  selection is the existing `SE_DMA 0x258 = 0` write. The other gates
+  (no firmware, busy, packing readback, inherited FIFO data) stay.
+- **Reporting**: the `SPES TOUCH: stopped at ...` line is now followed by
+  `SWEET TOUCH: fog diag ifdis=... fw=... status=... tx=... rx=...
+  gcc=.../.../...`, so one photo of the last two lines identifies the next
+  failure without scrolling.
+- **Builds**: `xnu` run **`40235249291`** on `dbf85c0` = success,
+  `kernel.development.sweet` 17,844,064 B, sha256
+  `50647b82d47cca3921f5e6d748f9e1f14240fe981dba791c9c00cb1ef34d3fa9`
+  (only the usual pre-existing `sweet_touch.c` warnings).
+  - diagnostic: `fog-image` run **`40235763865`**, 17,457,152 B, sha256
+    `0602a0df53b7f27e60c79ea843c5a18f78460fbccc2fbf557896e79f5dd8ea66`;
+    cmdline re-checked (`rd=md0 ... sweettouch=1 sweettouchdelay=5
+    sweettouchdiag=3`). On this PC `shim/out/rain-diagnostic-touch.img`, on the
+    Mac `~/ios-fog/shim/out/rain-diagnostic-touch.img`.
+  - full iOS rebuilt on the Mac from the same kernel (45 s driver delay,
+    no stats): `~/ios-fog/shim/out/rain-ios.img`, 17,444,864 B, sha256
+    `a5def6e632fbdad980ac2adf68f258a37629cbb0a3989cff2b09222400eb48de`.
+- **Next concrete action**: boot `rain-diagnostic-touch.img` again. Expected
+  new lines: `SWEET TOUCH: fog spi mclk=... wordlen=... trans=...`, then
+  `fog pins ...`, `fog fwinfo page=...`, `fog novatek page=...`, then
+  `fog frames=...` while touching (or `report err=...` if SPI reads fail).
+  Only then boot `rain-ios.img` and test the lock screen.
+
 ## 2026-10-25 (late evening) — RD-mode diagnostics never started the touch driver
 
 **Status: probe fixed, diagnostic image rebuilt; waiting for the first boot that
