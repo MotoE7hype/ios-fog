@@ -20,11 +20,32 @@
   boot image** produced a **kernel panic** instead of reaching userspace.
   Nothing is known yet about where it panicked.
 - **Unresolved / needed before debugging**:
-  1. `sha256`, byte size and cmdline of both images (good and panicking);
-  2. a photo of the panic screen, or `sweetlog=1` output pulled by booting the
+  1. a photo of the panic screen, or `sweetlog=1` output pulled by booting the
      diagnostic/TWRP again — the panel is the only console on this unit;
-  3. whether the good image was built with `FOG_TOUCH=0` and the bad one with
-     `FOG_TOUCH=1` from the same kernel artifact.
+  2. which kernel commit the *good* lock-screen boot used (the bad one is
+     pinned below, but the good image was overwritten).
+- **Artifacts verified on the Mac over ssh (2026-10-25)**:
+  - host `mac` = `192.168.1.116`, user `boriscich`, macOS 14.7.2 Sonoma on
+    Intel (x86_64), 4 cores, 4 GiB RAM, 41 GiB free. Key-based login works
+    (`~/.ssh/id_mac`, `Host mac` in `C:\Users\boris\.ssh\config`).
+  - `~/ios-fog` is clean on `fog` at `39db95c`; `xnu/out/kernel.development.sweet`
+    is 17,843,816 bytes (downloaded from CI run `40082826798`).
+  - `shim/out/rain-ios.img` and `shim/out/shim-boot.img` are the **same file**
+    (17,440,768 bytes, sha256 `361a4d5d89e3403cf135cc9a5e06776ea65a5cd13287c5cf2e066758a2810ddc`),
+    built 2026-10-24 13:20 local. Its boot cmdline includes
+    `sweettouch=1 sweetfb_panel_w=720 sweetfb_panel_h=1650`, i.e. **the only
+    surviving image is the `FOG_TOUCH=1` build — the panicking one.** The
+    `FOG_TOUCH=0` image that reached the lock screen was overwritten and exists
+    neither on the Mac nor in git, so the good boot cannot be re-flashed from
+    this artifact alone.
+  - That cmdline also has `ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10`, so the
+    panic run was writing to the HFS root and may have left a `sweetlog` ring
+    behind (recoverable by booting TWRP/`fastboot boot` again).
+  - `aarch64-linux-gnu-*` is installed in `/usr/local/bin`, so the shim and
+    images can be rebuilt **on the Mac without CI**; `research/` holds the
+    three iPhone X DMGs, `d22ap.adt` and `fog-ios-root.img` (16 GiB).
+    Neither `dtb/` nor `probe/` exists there either, so Mac builds use
+    `FOG_MEMORY=0x100000000:0x40000000`.
 - **Leading hypothesis (not verified)**: patch `0101` panics in the fog init
   path it adds — `touch_clocks()` called unconditionally for `st.fog` and/or
   `ml_io_map(0x04a80000)` / GCC vote writes on `0x1f144`/`0x1f148` before any
