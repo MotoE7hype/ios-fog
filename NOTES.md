@@ -1,5 +1,43 @@
 # ios-fog (fog/rain/wind) port — scaffolding + verified hardware, 2026-10-22
 
+## 2026-10-25 (late evening) — RD-mode diagnostics never started the touch driver
+
+**Status: probe fixed, diagnostic image rebuilt; waiting for the first boot that
+actually prints `SWEET TOUCH: fog ...`.**
+
+- **Handset results (user report)**: the RAM diagnostic (`rain-diagnostic-touch.img`,
+  `sweettouch=1 ...`) boots and stays alive but prints **no touch lines**. The
+  full iOS image (`rain-ios-touch.img`) **no longer panics**, the interface is
+  scaled correctly and the clock advances, but **touch does not work**, and
+  verbose text keeps scrolling over the UI.
+- **Root cause of "no prints" (code reading, confirmed by the boot order)**:
+  `sweet_touch_init()` had exactly one caller, the UFS path in `sweet_ufs_init()`.
+  The diagnostic boots `rd=md0`, so that function never runs and the driver was
+  never started - the image could not print anything. Fixed in `0101`:
+  `spes_touch_probe()` now also starts the driver when `rd=md0`, the device tree
+  has `/fog-platform`, and `sweettouch=1`.
+- **Rebuild**: xnu CI run **`40233091354`** on `4b5e4fd` = **success**
+  (`kernel.development.sweet` 17,844,064 B, sha256
+  `899508dc19b90582478afa271783714142df96cf0447b55e17d46b7001c88e91`; the only
+  `sweet_touch.c` diagnostics remain `-Wdeclaration-after-statement` notes).
+- **New diagnostic image**: `fog-image` run **`40233715136`** (`device=rain`,
+  `kernel_run=40233091354`, `memory=0x100000000:0x40000000`, `touch=1`),
+  `rain-diagnostic.img` 17,457,152 B, sha256
+  `83d05740770ec521593a68483d1a831c2a9bc0169ee4072722be78475b21902a`.
+  Packed payload cmdline re-checked: `rd=md0 ... sweettouch=1
+  sweettouchdelay=5 sweettouchdiag=3 sweetfb_panel_w=720 sweetfb_panel_h=1650
+  ...`. Copies: `shim/out/rain-diagnostic-touch.img` here and
+  `~/ios-fog/shim/out/rain-diagnostic-touch.img` on the Mac.
+- **iOS image unchanged on purpose**: the probe edit only adds the `rd=md0`
+  branch, so the iOS boot path is unaffected and `rain-ios-touch.img`
+  (`cf649ec341407513c198be69fb32b25bda4766d354372d2d2cb202b44be296b5`, Mac
+  `shim/out/rain-ios.img`) does not need a rebuild.
+- **Next concrete action**: boot the new `rain-diagnostic-touch.img` and read
+  the ordered lines `fog gcc`, `fog se0 fw/proto`, `fog pins`, `fog fwinfo`,
+  `fog novatek page`, then `fog frames=... down=...` while touching the panel.
+  Then boot `rain-ios.img` again: if the scrolling line is `SWEET TOUCH: fog
+  report err=...`, it names the failing transfer; a photo is enough.
+
 ## 2026-10-25 (evening) — SE0 GENI SPI touch implemented, kernel and images build
 
 **Status: code complete and compiling; no handset boot yet** (`adb devices` and

@@ -21,9 +21,9 @@ Open issues:
 
 | Item | State |
 | --- | --- |
-| Touch | Implemented in patch `0101`: Novatek `NVT-ts` on QUPv3 **SE0 GENI SPI**, FIFO mode, split TX/RX commands with CS held across a register read. Not yet booted on the handset, so it is unproven. |
-| Touch-enabled build | The first `0101` **kernel-panicked** because it voted the GCC clocks before mapping them; the rewrite maps first and builds clean in CI. |
-| Display scaling | Patch `0100` adds the present-path resample, but the 1125x2436 canvas is still reported as not fitted on the 720x1650 panel. |
+| Touch | Implemented in patch `0101`: Novatek `NVT-ts` on QUPv3 **SE0 GENI SPI**, FIFO mode, split TX/RX commands with CS held across a register read. The patched image boots on the handset but touch does not respond yet. |
+| Touch-enabled build | The first `0101` **kernel-panicked** because it voted the GCC clocks before mapping them; the rewrite maps first, boots on the handset, and builds clean in CI. The RAM diagnostic printed no touch lines because `rd=md0` never reached the driver; `spes_touch_probe()` now covers that path (`4b5e4fd`, image from `fog-image` run `40233715136`), and that boot is still pending. |
+| Display scaling | Patch `0100` fits the 1125x2436 canvas to the 720x1650 panel; confirmed on the handset. |
 | Keys, UFS, GPU, Wi-Fi, SMP | Inherited, unverified here. Keep `sweetkeys=0 sweethw=0` until each is tested. |
 
 This is an experimental port, not a daily-use ROM. Boot images are loaded with
@@ -83,7 +83,7 @@ notes for the SPI work.
 
 `.github/workflows/xnu.yml` builds XNU on macOS runners (manual dispatch) and
 applies the whole patch series. Download the `xnu-kernel` artifact into
-`xnu/out`. The current `fog` tip built successfully in run `40230084504`.
+`xnu/out`. The current `fog` tip built successfully in run `40233091354`.
 
 No local toolchain is required for the boot images either:
 `.github/workflows/fog-image.yml` builds a diagnostic on `ubuntu-latest` from a

@@ -47,18 +47,24 @@ still be probed before booting.
 | --- | --- |
 | Reaches the lock screen | iOS userland/SpringBoard up on the 720x1650 panel |
 | Stays alive | the on-screen clock advances; no panic or crash during the run |
-| Touch | dead — patch `0101` had no SPI transport (rewritten 2026-10-25) |
-| Display scaling | still wrong — the 1125x2436 canvas is not fitted to the panel |
-| Touch-enabled build (`0101`) | **kernel panic** before userspace; cause found and fixed 2026-10-25 |
+| Display scaling | correct on the rewritten driver: the canvas is fitted to the panel |
+| Touch-enabled build (`0101`, rewritten) | boots, **no touch** |
+| RAM diagnostic with `sweettouch=1` | boots, but printed no touch lines (probe never ran, fixed below) |
 
-The panic came from the first version of `0101`: it called `touch_clocks()`
-from `sweet_touch_init()`, i.e. before the touch thread had mapped `st.gcc`, so
-the GCC vote write dereferenced a NULL window. No panic text was ever captured,
-so this is a reading of the patch, not a photographed backtrace. The rewrite
-votes the clocks inside `touch_fog_run()`, after the mapping succeeds, and the
-kernel now builds in CI. A new full iOS image with the rewritten driver exists
-(`rain-ios-touch.img`, below), but neither it nor the diagnostic build has been
-booted on the handset yet.
+The original panic came from the first version of `0101`: it called
+`touch_clocks()` from `sweet_touch_init()`, i.e. before the touch thread had
+mapped `st.gcc`, so the GCC vote write dereferenced a NULL window. No panic text
+was ever captured, so this is a reading of the patch, not a photographed
+backtrace. The rewrite votes the clocks inside `touch_fog_run()`, after the
+mapping succeeds, and the handset confirms it no longer panics.
+
+The diagnostic image printed nothing because `sweet_touch_init()` had a single
+caller, the UFS path in `sweet_ufs_init()`, and `rd=md0` never reaches it. Since
+2026-10-25 `spes_touch_probe()` also starts the driver for `rd=md0` when the
+device tree has `/fog-platform` and `sweettouch=1`; the resulting image is
+`fog-image` run `40233715136` (kernel `40233091354`, patch `0101` at `4b5e4fd`).
+The full iOS image does not need that branch and was not rebuilt. Neither image
+has produced a touch report on the handset yet.
 
 ## Why this is not a copy of `spes`
 
@@ -154,6 +160,29 @@ The driver stops instead of poking an unknown SE: it skips the probes when
 disabled), or the SE reports busy / inherited FIFO data. Those prints are the
 first thing to read on the handset.
 
+### Where the driver starts
+
+`spes_touch_probe()` starts the inherited driver for `/spes-platform`; for fog
+it starts the same file's fog path when the device tree has `/fog-platform` and
+`sweettouch=1`. The full iOS image reaches it through `sweet_ufs_init()` (UFS
+root, `rd=ufsroot0`). The RAM diagnostic boots `rd=md0`, which never runs that
+function - this is why the first touch diagnostic boot printed nothing. Since
+patch `0101` at `4b5e4fd` the probe also accepts `rd=md0`, so the diagnostic can
+be used to debug the transport without an iOS install.
+
+Test order with the phone in fastboot:
+
+1. `fastboot boot shim/out/rain-diagnostic-touch.img` (RAM only; built by
+   `fog-image` run `40233715136`). Expect `fog gcc`, `fog se0 fw/proto`,
+   `fog pins`, `fog fwinfo`, `fog novatek page`, then
+   `fog frames=... down=...` while touching.
+2. Only then boot the full iOS image (`rain-ios.img`) and test the lock screen.
+
+A hang after `fog gcc`/`fog se0` with no `fog pins` means the SE access itself
+blocks (clock vote or wrong SE instance); `fog pins` without transfers points at
+CS/framing. `SWEET TOUCH: fog report err=...` is printed every 100 consecutive
+failed reports and is the line to photograph if the UI shows scrolling text.
+
 ## What is in this branch
 
 - `tools/mkadt.py --device fog` (also `rain`, `wind` for this unit's image):
@@ -162,8 +191,8 @@ first thing to read on the handset.
     `/fog-platform` marker;
   - framebuffer `0x5c000000`, 720x1650, stride 2880;
   - still reports the iPhone X canvas (1125x2436 @3x) so UIKit has a supported
-    screen class. Until a scaling path exists, the panel shows the centre crop
-    of that canvas (the same mechanism spes uses for its 1080x2400 panel).
+    screen class; patch `0100` fits that canvas to the 720x1650 panel
+    (`sweetfb_scale`, default 1 = fit), which the handset confirms on screen.
 - `tools/spes_memory.py`: shared khaje selector. It now accepts `qcom,khaje`
   and `qcom,sm6225`, uses named alignment/minimum constants, and has a 4 GB
   test (2 GiB below + 2 GiB above 4 GiB). The upper bank is still the only
