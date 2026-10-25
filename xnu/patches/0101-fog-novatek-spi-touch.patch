@@ -1,3 +1,5 @@
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+index 2f09d3f..9e16260 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
 @@ -23,6 +23,10 @@
@@ -11,67 +13,59 @@
  extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-@@ -45,6 +49,59 @@
+@@ -45,6 +49,51 @@ void sweet_touch_init(void);
  #define TOUCH_GPIO_IO(n)  (TOUCH_GPIO_CFG(n) + 4u)
  #define TOUCH_MAX        10u
  #define TOUCH_GOODIX     1
 +
-+/* fog/rain/wind */
++/* fog/rain/wind: Novatek NVT-ts-spi on QUPv3 SE0 (spi@4a80000).
++ * GCC (gcc-sm6115.c): wrapper/SE0 branches live in the vote register
++ * 0x7900c: m_ahb 6, s_ahb 7, core 8, core_2x 9, s0 10; the s0 RCG is
++ * cmd 0x1f148 / cfg +4 and its branch halt bit is 0x1f144 bit 31. */
 +#define FOG_SE_PA        0x04a80000u
 +#define FOG_GCC_SE0_RCG  0x1f148u
 +#define FOG_GCC_SE0_CBCR 0x1f144u
-+#define FOG_GCC_WRAP_VOTE 0x13c0u
-+#define FOG_GCC_SE0_VOTE  0x0400u
++#define FOG_GCC_VOTE     0x7900cu
++#define FOG_GCC_VOTE_BITS 0x7c0u
 +#define FOG_PIN_RESET    86u
 +#define FOG_PIN_IRQ      80u
-+#define FOG_SPI_HZ       9600000u
++#define FOG_SPI_PINS     4u      /* GPIO0..3 = SCK/MOSI/MISO/CS, function qup0 */
 +#define FOG_PANEL_W      720u
 +#define FOG_PANEL_H      1650u
 +
++#define SE_GENI_OUTPUT_CTRL 0x24u
++#define SE_GENI_FORCE_DEFAULT 0x20u
++#define SE_GENI_CGC_CTRL 0x28u
++#define SE_GENI_DMA_GENERAL_CFG 0xe30u
++#define SE_GENI_GSI_EVENT_EN 0xe18u
++#define SE_GENI_IRQ_EN 0xe1cu
++#define SE_GENI_S_IRQ_EN 0x644u
++#define SE_GENI_S_IRQ_CLR 0x648u
++#define SE_GENI_BYTE_GRAN 0x254u
 +#define SE_SPI_CPHA      0x224u
 +#define SE_SPI_CPOL      0x230u
++#define SE_SPI_DEMUX_INV 0x24cu
++#define SE_SPI_DEMUX_SEL 0x250u
 +#define SE_SPI_TRANS_CFG 0x25cu
++#define SE_SPI_CS_TOGGLE (1u << 1)
 +#define SE_SPI_WORD_LEN  0x268u
 +#define SE_SPI_TX_TRANS_LEN 0x26cu
 +#define SE_SPI_RX_TRANS_LEN 0x270u
-+#define SE_SPI_DELAY     0x278u
-+#define SE_GENI_OUTPUT_CTRL 0x24u
-+#define SE_GENI_CFG_REG  0x254u
-+#define SE_GENI_CFG_SEQ_START 0x84u
-+#define SE_GENI_TX_PACK0 0x260u
-+#define SE_GENI_TX_PACK1 0x264u
-+#define SE_GENI_RX_PACK0 0x284u
-+#define SE_GENI_RX_PACK1 0x288u
-+#define SE_GENI_CLK_CTRL 0x48u
-+#define SE_GENI_IO_MUX_0_EN (1u << 0)
-+#define SPI_TX_ONLY      (1u << 0)
-+#define SPI_RX_ONLY      (1u << 1)
-+#define M_CMD_DONE_EN    (1u << 0)
-+#define M_CMD_OVERRUN_EN (1u << 1)
-+#define M_ILLEGAL_CMD_EN (1u << 2)
-+#define M_CMD_FAILURE_EN (1u << 3)
-+#define M_CMD_CANCEL_EN  (1u << 4)
-+#define M_CMD_ABORT_EN   (1u << 5)
-+#define M_RX_FIFO_WR_ERR_EN (1u << 25)
-+#define M_TX_FIFO_WR_ERR_EN (1u << 29)
-+#define M_RX_FIFO_RD_ERR_EN (1u << 24)
-+#define M_TX_FIFO_RD_ERR_EN (1u << 28)
++#define SPI_TX_ONLY      1u
++#define SPI_RX_ONLY      2u
++#define SPI_FRAGMENT     4u      /* keep CS asserted after this command */
 +
-+#define NVT_SPI_WRITE_MASK(a) ((a) | 0x80)
-+#define NVT_SPI_READ_MASK(a)  ((a) & 0x7F)
-+#define NVT_PAGE_CMD          0xFF
-+#define NVT_DUMMY_BYTES       1
-+#define NVT_POINT_DATA_LEN    78
-+#define NVT_EVENT_MAP_RESET_COMPLETE 0x60
-+#define NVT_EVENT_MAP_PROJECTID      0x9A
-+#define NVT_EVENT_MAP_FWINFO         0x78
-+#define NVT_RESET_STATE_REK          2
-+#define NVT_RESET_STATE_REK_FINISH   3
-+#define NVT_RESET_STATE_NORMAL_RUN   4
++#define NVT_PAGE_CMD          0xFFu
++#define NVT_POINT_DATA_LEN    65u
++#define NVT_EVENT_MAP_FWINFO  0x78u
++#define NVT_MAX_TOUCH         10u
++/* Novatek NT36xxx EVENT_BUF_ADDR candidates; FWINFO at +0x78 decides. */
++#define NVT_PAGE_COUNT        4u
++#define NVT_SWRST_N8_ADDR     0x3f0feu
  #define TOUCH_FTS        2
  /* GT9896 is Yellowstone in Xiaomi sweet-r-oss, not the Berlin protocol. */
  #define GOODIX_PID_REG   0x4022u
-@@ -87,7 +144,7 @@
+@@ -87,7 +136,7 @@ void sweet_touch_init(void);
  
  static struct {
  	vm_offset_t se, gcc, west, east;
@@ -80,22 +74,438 @@
  	bool started, dead, probing;
  	int kind, irq_hint;
  	uint32_t irq_status, irq_last, active;
-@@ -179,6 +236,14 @@
+@@ -179,6 +228,25 @@ touch_clocks(void)
  	 * shared vote register (other bits belong to other clients), XO parent
  	 * with divider 1 = 19.2 MHz, no PLL or voltage change.
  	 */
 +	if (st.fog) {
-+		touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | FOG_GCC_WRAP_VOTE | FOG_GCC_SE0_VOTE);
-+		touch_wr(st.gcc, FOG_GCC_SE0_RCG + 4u, 1u);
-+		touch_wr(st.gcc, FOG_GCC_SE0_RCG, touch_rd(st.gcc, FOG_GCC_SE0_RCG) | 1u);
-+		if (!touch_wait_clear(st.gcc, FOG_GCC_SE0_RCG, 1u)) return false;
-+		if (!touch_wait_clear(st.gcc, FOG_GCC_SE0_CBCR, 1u << 31)) return false;
-+		return true;
++		uint32_t vote = touch_rd(st.gcc, FOG_GCC_VOTE);
++		touch_wr(st.gcc, FOG_GCC_VOTE, vote | FOG_GCC_VOTE_BITS);
++		/* gcc-sm6115.c: parent 0 is BI_TCXO (19.2 MHz) and mode 0
++		 * bypasses the MND divider, so CFG alone selects 19.2 MHz. */
++		touch_wr(st.gcc, FOG_GCC_SE0_RCG + 4u, 0);
++		touch_wr(st.gcc, FOG_GCC_SE0_RCG,
++		    touch_rd(st.gcc, FOG_GCC_SE0_RCG) | 1u);
++		bool rcg = touch_wait_clear(st.gcc, FOG_GCC_SE0_RCG, 1u);
++		bool branch = touch_wait_clear(st.gcc, FOG_GCC_SE0_CBCR, 1u << 31);
++		printf("SWEET TOUCH: fog gcc vote=%#x rcg=%#x cfg=%#x cbcr=%#x ok=%d/%d\n",
++		    touch_rd(st.gcc, FOG_GCC_VOTE), touch_rd(st.gcc, FOG_GCC_SE0_RCG),
++		    touch_rd(st.gcc, FOG_GCC_SE0_RCG + 4u),
++		    touch_rd(st.gcc, FOG_GCC_SE0_CBCR), rcg ? 1 : 0, branch ? 1 : 0);
++		st.d_vote = touch_rd(st.gcc, FOG_GCC_VOTE);
++		st.d_cfg = touch_rd(st.gcc, FOG_GCC_SE0_RCG + 4u);
++		st.d_cbcr = touch_rd(st.gcc, FOG_GCC_SE0_CBCR);
++		return rcg && branch;
 +	}
  	touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | 0x13c0u);
  	printf("SWEET TOUCH: gcc vote=%#x rcg=%#x cfg=%#x cbcr=%#x\n",
  	    touch_rd(st.gcc, TOUCH_GCC_VOTE), touch_rd(st.gcc, TOUCH_RCG),
-@@ -1569,9 +1634,9 @@
+@@ -608,6 +676,404 @@ touch_se_init(void)
+ 	return true;
+ }
+ 
++/*
++ * fog: QUPv3 SE0 as a GENI SPI master in FIFO mode (no GSI, no DMA),
++ * driving the Novatek NVT-ts-spi controller. CS framing: CS_TOGGLE is
++ * cleared, so the sequencer drives CS around each primary command, and
++ * SPI_FRAGMENT keeps CS asserted between the two halves of a register read.
++ */
++static const uint32_t fog_nvt_pages[NVT_PAGE_COUNT] = {
++	0x21c00u,   /* NT36672A */
++	0x11a00u,   /* NT36525 */
++	0x22d00u,   /* NT36675 */
++	0x11e00u,   /* NT36772 */
++};
++static uint32_t fog_nvt_page = 0x21c00u;
++static unsigned fog_abs_x, fog_abs_y;
++
++/* Drain packed RX FIFO words into rx[]. Returns nonzero on a lost frame. */
++static int
++touch_fog_drain(uint8_t *rx, unsigned nr, unsigned *got)
++{
++	uint32_t count = touch_rd(st.se, SE_RX_COUNT) & 0x1ffffffu;
++
++	if (count > 32u) {
++		return EIO;
++	}
++	while (count-- && *got < nr) {
++		uint32_t word = touch_rd(st.se, SE_RX);
++		for (unsigned j = 0; j < 4u && *got < nr; ++j) {
++			rx[(*got)++] = (uint8_t)(word >> (8u * j));
++		}
++	}
++	return 0;
++}
++
++/* One primary-sequencer FIFO command; lengths are in SPI words = bytes. */
++static int
++touch_spi_run(unsigned opcode, unsigned params, const uint8_t *tx, unsigned nt,
++    uint8_t *rx, unsigned nr)
++{
++	if (st.dead || (!nt && !nr) || nt > 4 || nr > 96) {
++		return EINVAL;
++	}
++	if (!touch_wait_clear(st.se, SE_STATUS, 1u)) {
++		st.dead = true; /* no other SE0 owner is supported */
++		return EBUSY;
++	}
++	touch_wr(st.se, SE_IRQ_CLR, 0xffffffffu);
++	touch_wr(st.se, SE_TX_WM, 0);
++	if (nt) {
++		touch_wr(st.se, SE_TX_LEN, nt);
++	}
++	if (nr) {
++		touch_wr(st.se, SE_RX_LEN, nr);
++	}
++	touch_wr(st.se, SE_CMD, (opcode << 27) | (params & 0x7ffffffu));
++	/* spi-geni-qcom.c fills the FIFO right after the command; a one-word
++	 * write needs no watermark interrupt (the whole transfer is 4 bytes). */
++	if (nt) {
++		uint32_t word = 0;
++		for (unsigned j = 0; j < nt; ++j) {
++			word |= (uint32_t)tx[j] << (8u * j);
++		}
++		touch_wr(st.se, SE_TX, word);
++	}
++
++	unsigned got = 0;
++	int err = ETIMEDOUT;
++	for (unsigned i = 0; i < 5000; ++i) {
++		uint32_t irq = touch_irq();
++		if (irq & SE_ERRORS) {
++			err = EIO;
++			break;
++		}
++		if ((err = touch_fog_drain(rx, nr, &got)) != 0) {
++			break;
++		}
++		if (irq & SE_DONE) {
++			/* DONE may be visible before the last RX word lands. */
++			(void)touch_fog_drain(rx, nr, &got);
++			if (touch_irq() & SE_ERRORS) {
++				err = EIO;
++				break;
++			}
++			touch_wr(st.se, SE_IRQ_CLR, 0xffffffffu);
++			if (got == nr) {
++				return 0;
++			}
++			err = EIO;
++			break;
++		}
++		touch_wr(st.se, SE_IRQ_CLR, irq & (SE_RX_WM_IRQ | SE_RX_LAST));
++		delay(1);
++	}
++	if (st.probing || err != ETIMEDOUT) {
++		printf("SWEET TOUCH: fog spi op=%u frag=%u nt=%u nr=%u err=%d "
++		    "irq=%#x got=%u status=%#x\n", opcode, params >> 2, nt, nr,
++		    err, st.irq_last, got, touch_rd(st.se, SE_STATUS));
++	}
++	touch_abort();
++	return err;
++}
++
++/* Novatek page register: 0xFF then bits 21:14 and 13:7 of the address. */
++static int
++touch_fog_set_page(uint32_t addr)
++{
++	uint8_t b[3];
++
++	b[0] = NVT_PAGE_CMD;
++	b[1] = (uint8_t)(addr >> 15);
++	b[2] = (uint8_t)(addr >> 7);
++	return touch_spi_run(SPI_TX_ONLY, 0, b, 3, NULL, 0);
++}
++
++/*
++ * Vendor CTP_SPI_READ() framing: one masked address byte (bit 7 clear) and
++ * then N data bytes, where the byte clocked together with the address and
++ * one more are dummies. Splitting at the command boundary therefore puts
++ * the first valid byte at rx[1].
++ */
++static int
++touch_fog_read(uint32_t addr, uint8_t *buf, unsigned n)
++{
++	uint8_t a = (uint8_t)(addr & 0x7fu);
++	uint8_t rx[96];
++	int err;
++
++	if (n == 0 || n + 1 > sizeof(rx)) {
++		return EINVAL;
++	}
++	if ((err = touch_fog_set_page(addr)) != 0) {
++		return err;
++	}
++	if ((err = touch_spi_run(SPI_TX_ONLY, SPI_FRAGMENT, &a, 1, NULL, 0)) != 0) {
++		return err;
++	}
++	if ((err = touch_spi_run(SPI_RX_ONLY, 0, NULL, 0, rx, n + 1)) != 0) {
++		return err;
++	}
++	memcpy(buf, rx + 1, n);
++	return 0;
++}
++
++/* Validate FWINFO at page+0x78 (fw_ver + ~fw_ver == 0xFF, sane panel). */
++static bool
++touch_fog_fwinfo(void)
++{
++	uint8_t buf[17];
++
++	for (unsigned i = 0; i < NVT_PAGE_COUNT; ++i) {
++		uint32_t page = fog_nvt_pages[i];
++		unsigned bx, by, lx, ly;
++
++		memset(buf, 0, sizeof(buf));
++		int err = touch_fog_read(page | NVT_EVENT_MAP_FWINFO, buf, sizeof(buf));
++		if (err) {
++			printf("SWEET TOUCH: fog fwinfo page=%#x err=%d\n", page, err);
++			if (st.dead) {
++				break;
++			}
++			continue;
++		}
++		bx = ((unsigned)buf[4] << 8) | buf[5];
++		by = ((unsigned)buf[6] << 8) | buf[7];
++		lx = ((unsigned)buf[5] << 8) | buf[4];
++		ly = ((unsigned)buf[7] << 8) | buf[6];
++		printf("SWEET TOUCH: fog fwinfo page=%#x fw=%02x/%02x xnum=%u "
++		    "ynum=%u be=%ux%u le=%ux%u\n", page, buf[0], buf[1], buf[2],
++		    buf[3], bx, by, lx, ly);
++		if ((unsigned)buf[0] + (unsigned)buf[1] != 0xffu) {
++			continue;
++		}
++		unsigned x = bx, y = by;
++		if (x < 200u || y <= x || y > 6000u) {
++			x = lx;
++			y = ly;
++		}
++		if (x < 200u || y <= x || y > 6000u) {
++			printf("SWEET TOUCH: fog fwinfo page=%#x dims implausible\n",
++			    page);
++			continue;
++		}
++		fog_nvt_page = page;
++		fog_abs_x = x;
++		fog_abs_y = y;
++		printf("SWEET TOUCH: fog novatek page=%#x fw-scale=%ux%u panel=%ux%u\n",
++		    page, x, y, FOG_PANEL_W, FOG_PANEL_H);
++		return true;
++	}
++	printf("SWEET TOUCH: fog fwinfo not confirmed; polling page=%#x\n",
++	    fog_nvt_page);
++	return false;
++}
++
++/* 65-byte EVENT_BUF frame: ten 6-byte records, id in bits 7:3, type 1/2=down. */
++static int
++touch_fog_report(void)
++{
++	uint8_t buf[NVT_POINT_DATA_LEN];
++	int x[TOUCH_MAX] = {0}, y[TOUCH_MAX] = {0};
++	uint32_t mask = 0;
++	int err = touch_fog_read(fog_nvt_page, buf, sizeof(buf));
++
++	if (err) {
++		return err;
++	}
++	if (!st.s_frames || buf[0] || buf[1]) {
++		memcpy(st.s_raw, buf, sizeof(st.s_raw));
++	}
++	st.s_frames++;
++	for (unsigned i = 0; i < NVT_MAX_TOUCH; ++i) {
++		const uint8_t *p = buf + 6u * i;
++		unsigned id = p[0] >> 3, type = p[0] & 7u, px, py;
++
++		if (id == 0 || id > NVT_MAX_TOUCH) {
++			continue;
++		}
++		if (type != 1u && type != 2u) {
++			continue; /* up / idle record */
++		}
++		px = ((unsigned)p[1] << 4) | (p[3] >> 4);
++		py = ((unsigned)p[2] << 4) | (p[3] & 0x0fu);
++		if (fog_abs_x && fog_abs_x != FOG_PANEL_W) {
++			px = (unsigned)((uint64_t)px * FOG_PANEL_W / fog_abs_x);
++		}
++		if (fog_abs_y && fog_abs_y != FOG_PANEL_H) {
++			py = (unsigned)((uint64_t)py * FOG_PANEL_H / fog_abs_y);
++		}
++		if (px >= FOG_PANEL_W) {
++			px = FOG_PANEL_W - 1u;
++		}
++		if (py >= FOG_PANEL_H) {
++			py = FOG_PANEL_H - 1u;
++		}
++		mask |= 1u << (id - 1u);
++		x[id - 1u] = (int)px;
++		y[id - 1u] = (int)py;
++	}
++	unsigned n = (unsigned)__builtin_popcount(mask);
++	if (n > st.s_maxn) {
++		st.s_maxn = n;
++	}
++	touch_report(mask, x, y);
++	return 0;
++}
++
++static bool
++touch_fog_se_init(void)
++{
++	uint32_t fw = touch_rd(st.se, SE_FW);
++	uint32_t tx = touch_rd(st.se, SE_HW_TX), rx = touch_rd(st.se, SE_HW_RX);
++
++	st.d_fw = fw;
++	st.d_status = touch_rd(st.se, SE_STATUS);
++	st.d_hwtx = tx;
++	st.d_hwrx = rx;
++	printf("SWEET TOUCH: fog se0 fw=%#x proto=%u status=%#x tx=%#x rx=%#x "
++	    "ifdis=%#x\n", fw, (fw >> 8) & 0xffu, touch_rd(st.se, SE_STATUS),
++	    tx, rx, touch_rd(st.se, 0x64));
++	if (((fw >> 8) & 0xffu) != 1u) {
++		printf("SWEET TOUCH: SE0 has no GENI SPI firmware; probes skipped\n");
++		return false;
++	}
++	if (touch_rd(st.se, 0x64) & 1u) {
++		printf("SWEET TOUCH: SE0 FIFO interface disabled; probes skipped\n");
++		return false;
++	}
++	if (touch_rd(st.se, SE_STATUS) & 0x1001u) {
++		printf("SWEET TOUCH: SE0 already busy; probes skipped\n");
++		return false;
++	}
++	touch_wr(st.se, SE_GENI_GSI_EVENT_EN, 0); /* no GSI events */
++	touch_wr(st.se, SE_GENI_IRQ_EN, 0x4u);    /* GENI_M_IRQ_EN, polled */
++	touch_wr(st.se, SE_GENI_S_IRQ_EN, 0);
++	touch_wr(st.se, SE_IRQ_CLR, 0xffffffffu);
++	touch_wr(st.se, SE_GENI_S_IRQ_CLR, 0xffffffffu);
++	touch_wr(st.se, SE_DMA, 0);               /* FIFO mode */
++	touch_wr(st.se, SE_GENI_CGC_CTRL, touch_rd(st.se, SE_GENI_CGC_CTRL) | 0x7fu);
++	touch_wr(st.se, SE_GENI_DMA_GENERAL_CFG,
++	    touch_rd(st.se, SE_GENI_DMA_GENERAL_CFG) | 0x0fu);
++	touch_wr(st.se, SE_GENI_OUTPUT_CTRL, 0x7f);
++	touch_wr(st.se, SE_GENI_FORCE_DEFAULT, 1);
++	touch_wr(st.se, SE_CLK_SEL, 0);
++	/* gcc parent is 19.2 MHz; the SPI core clock divides by 2 = 9.6 MHz. */
++	touch_wr(st.se, SE_MCLK, (2u << 4) | 1u);
++	touch_wr(st.se, SE_SPI_CPHA, 0);
++	touch_wr(st.se, SE_SPI_CPOL, 0);
++	touch_wr(st.se, SE_SPI_DEMUX_INV, 0);
++	touch_wr(st.se, SE_SPI_DEMUX_SEL, 0);
++	touch_wr(st.se, SE_SPI_TRANS_CFG,
++	    touch_rd(st.se, SE_SPI_TRANS_CFG) & ~SE_SPI_CS_TOGGLE);
++	touch_wr(st.se, SE_SPI_WORD_LEN, 4u); /* bits_per_word - 4 */
++	touch_wr(st.se, SE_GENI_BYTE_GRAN, 0); /* four 8-bit words per FIFO entry */
++	touch_wr(st.se, 0x260, SE_PACK0);
++	touch_wr(st.se, 0x264, SE_PACK1);
++	touch_wr(st.se, 0x284, SE_PACK0);
++	touch_wr(st.se, 0x288, SE_PACK1);
++	touch_wr(st.se, SE_TX_WM, 0);
++	touch_wr(st.se, 0x810, 0);
++	touch_wr(st.se, 0x814, 0);
++	touch_wr(st.se, SE_IRQ_EN, SE_EVENTS);
++	printf("SWEET TOUCH: fog spi mclk=%#x wordlen=%#x trans=%#x pack=%#x/%#x "
++	    "gran=%#x\n", touch_rd(st.se, SE_MCLK), touch_rd(st.se, SE_SPI_WORD_LEN),
++	    touch_rd(st.se, SE_SPI_TRANS_CFG), touch_rd(st.se, 0x260),
++	    touch_rd(st.se, 0x264), touch_rd(st.se, SE_GENI_BYTE_GRAN));
++	if (touch_rd(st.se, 0x260) != SE_PACK0 || touch_rd(st.se, 0x264) != SE_PACK1 ||
++	    touch_rd(st.se, SE_GENI_BYTE_GRAN) != 0) {
++		printf("SWEET TOUCH: fog packing readback mismatch; probes skipped\n");
++		return false;
++	}
++	if ((touch_rd(st.se, SE_TX_COUNT) & 0xfffffffu) ||
++	    (touch_rd(st.se, SE_RX_COUNT) & 0x1ffffffu)) {
++		printf("SWEET TOUCH: fog inherited FIFO data; probes skipped\n");
++		return false;
++	}
++	return true;
++}
++
++/* Whole fog bring-up: clocks, SE0, pins, reset, FWINFO probe, poll loop. */
++static void
++touch_fog_run(void)
++{
++	st.stage = "fog clocks";
++	if (!touch_clocks()) {
++		return;
++	}
++	st.stage = "fog se0";
++	if (!touch_fog_se_init()) {
++		return;
++	}
++	st.stage = "fog pins";
++	for (unsigned pin = 0; pin < FOG_SPI_PINS; ++pin) {
++		touch_gpio(pin, 1, 0, 2, false, false); /* qup0, 6 mA, no pull */
++	}
++	touch_gpio(FOG_PIN_IRQ, 0, 3, 3, false, false);  /* input, pull-up, 8 mA */
++	touch_gpio(FOG_PIN_RESET, 0, 3, 3, true, true);  /* output, pull-up, idle high */
++	touch_wait(10);
++	printf("SWEET TOUCH: fog pins sck=%#x mosi=%#x miso=%#x cs=%#x irq=%#x/%#x "
++	    "reset=%#x/%#x\n",
++	    touch_rd(st.west, TOUCH_GPIO_CFG(0)), touch_rd(st.west, TOUCH_GPIO_CFG(1)),
++	    touch_rd(st.west, TOUCH_GPIO_CFG(2)), touch_rd(st.west, TOUCH_GPIO_CFG(3)),
++	    touch_rd(st.west, TOUCH_GPIO_CFG(FOG_PIN_IRQ)),
++	    touch_rd(st.west, TOUCH_GPIO_IO(FOG_PIN_IRQ)),
++	    touch_rd(st.west, TOUCH_GPIO_CFG(FOG_PIN_RESET)),
++	    touch_rd(st.west, TOUCH_GPIO_IO(FOG_PIN_RESET)));
++	/* Novatek power-on reset is active low; firmware is up after ~200 ms. */
++	touch_gpio(FOG_PIN_RESET, 0, 0, 3, true, false);
++	touch_wait(20);
++	touch_gpio(FOG_PIN_RESET, 0, 0, 3, true, true);
++	touch_wait(250);
++	st.stage = "fog probe";
++	st.probing = true;
++	(void)touch_fog_fwinfo();
++	st.probing = false;
++	if (st.dead) {
++		return;
++	}
++	st.stage = "fog polling";
++	printf("SWEET TOUCH: fog novatek polling page=%#x poll=10ms irq-hint=%d\n",
++	    fog_nvt_page, st.irq_hint);
++	unsigned errors = 0, ticks = 0, polls = 0;
++	while (!st.dead) {
++		if (st.diag == 3 && ++polls % 500u == 0) {
++			printf("SWEET TOUCH: fog frames=%u errors=%u down=%u up=%u "
++			    "last=%d,%d active=%#x\n", st.s_frames, st.s_errs,
++			    st.s_down, st.s_up, st.s_lastx, st.s_lasty, st.active);
++		}
++		if (st.diag == 2 && ++polls == 3000) {
++			panic("SWEET TOUCH fog stats: frames=%u errs=%u lasterr=%d "
++			    "maxn=%u hid down=%u up=%u last=%d,%d | raw %02x %02x "
++			    "%02x | %02x %02x %02x %02x %02x %02x", st.s_frames,
++			    st.s_errs, st.s_lasterr, st.s_maxn, st.s_down, st.s_up,
++			    st.s_lastx, st.s_lasty, st.s_raw[0], st.s_raw[1],
++			    st.s_raw[2], st.s_raw[3], st.s_raw[4], st.s_raw[5],
++			    st.s_raw[6], st.s_raw[7], st.s_raw[8]);
++		}
++		if (!st.irq_hint || st.active ||
++		    !(touch_rd(st.west, TOUCH_GPIO_IO(FOG_PIN_IRQ)) & 1u) ||
++		    (++ticks % 10u) == 0) {
++			int err = touch_fog_report();
++			if (err) {
++				st.s_errs++;
++				st.s_lasterr = err;
++				if ((errors++ % 100u) == 0) {
++					printf("SWEET TOUCH: fog report err=%d irq=%#x\n",
++					    err, st.irq_status);
++				}
++				if (errors == 10) {
++					touch_report(0, st.x, st.y);
++				}
++			} else {
++				errors = 0;
++			}
++		}
++		touch_wait(10);
++	}
++	touch_report(0, st.x, st.y);
++}
++
+ /* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
+  * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
+  * or PMIC request is taken until the inherited bootloader state is known.
+@@ -1569,15 +2035,20 @@ touch_thread(void *arg, wait_result_t result)
  	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
  	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
  	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
@@ -108,14 +518,24 @@
  	if (!st.gcc || !st.west || !st.east || !st.se) {
  		printf("SWEET TOUCH: MMIO mapping failed\n");
  		goto out;
-@@ -1702,7 +1767,9 @@
+ 	}
+ 	spes_gpu_power_probe();
+ 	spes_glink_rpm_probe();
++	/* fog has no I2C SE2 touch: clock SE0, drive SPI, poll Novatek. */
++	if (st.fog) {
++		touch_fog_run();
++		goto out;
++	}
+ 	st.stage = "clocks";
+ 	if (!touch_clocks()) {
+ 		goto out;
+@@ -1702,7 +2173,8 @@ sweet_touch_init(void)
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
 -	if (st.spes) enabled = 0; /* opt in after initial boot diagnostics */
 +	st.fog = SecureDTLookupEntry(NULL, "/fog-platform", &platform) == kSuccess;
 +	if (st.spes || st.fog) enabled = 0; /* opt in after initial boot diagnostics */
-+	if (st.fog) { touch_clocks(); }
  	st.started = true;
  	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
  	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
