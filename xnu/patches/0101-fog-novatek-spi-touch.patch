@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
-index 2f09d3f..9e16260 100644
+index 2f09d3f..2b9fa96 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
 @@ -23,6 +23,10 @@
@@ -539,3 +539,15 @@ index 2f09d3f..9e16260 100644
  	st.started = true;
  	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
  	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
+@@ -1734,5 +2206,11 @@ spes_touch_probe(void)
+ 	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
+ 		sweet_touch_init();
+ 	}
++	/* fog RAM-root diagnostics: there is no UFS root, so sweet_ufs_init()
++	 * never runs. /fog-platform plus sweettouch=1 is the opt-in. */
++	if (strcmp(root, "md0") == 0 &&
++	    SecureDTLookupEntry(NULL, "/fog-platform", &platform) == kSuccess) {
++		sweet_touch_init();
++	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
