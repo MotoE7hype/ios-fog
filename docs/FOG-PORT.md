@@ -1,8 +1,9 @@
 # Redmi 10C (`fog`) port
 
-Status: **scaffolding + verified hardware facts (2026-10-22)**. No fog boot
-image has been run on the handset yet. The spes profile and its tests are
-unchanged.
+Status: **hardware verified; boots to the lock screen (2026-10-25)**. The iOS
+image reaches SpringBoard and keeps a live clock without panicking; touch is
+not ported and the touch-enabled build panics, and display scaling is still
+reported as not fitted. The spes profile and its tests are unchanged.
 
 Target: Redmi 10C `fog` (SM6225 / Snapdragon 680 "khaje", Adreno 610, 4 GB RAM,
 720x1650 panel, HyperOS 2, unlocked bootloader, root ADB). `rain` (Redmi 10
@@ -39,6 +40,20 @@ and `rain-shim` identity strings; the `/fog-platform` marker is shared, so one
 kernel patch covers the family. `wind` is included on the same assumption;
 every panel node in the verified live FDT is 720x1650, but a wind unit should
 still be probed before booting.
+
+## Boot status on the handset (2026-10-25, user report)
+
+| Result | Detail |
+| --- | --- |
+| Reaches the lock screen | iOS userland/SpringBoard up on the 720x1650 panel |
+| Stays alive | the on-screen clock advances; no panic or crash during the run |
+| Touch | dead (`sweettouch=1` has no SPI transport to talk to) |
+| Display scaling | still wrong — the 1125x2436 canvas is not fitted to the panel |
+| Touch-enabled build (`0101`) | **kernel panic** before userspace |
+
+The panicking image's `sha256`, cmdline and panic text were not captured, so
+the first job is to pin them down (see `NOTES.md`, 2026-10-25) and bisect
+`0101` — fog detection only, then clock votes, then the SE0 mapping.
 
 ## Why this is not a copy of `spes`
 

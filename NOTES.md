@@ -1,13 +1,51 @@
 # ios-fog (fog/rain/wind) port — scaffolding + verified hardware, 2026-10-22
 
+## 2026-10-25 — lock screen confirmed stable; touch-enabled build panics (user report)
+
+- **Source**: user report on 2026-10-25. Recorded verbatim as an observation; no
+  agent has reproduced either boot yet and no photo/log was captured, so the
+  exact images, `sha256`, cmdline and panic text are still unknown.
+- **Boot observed as good (observation)**:
+  - the iOS image boots all the way to the **lock screen**;
+  - **no touch** (expected — patch `0101` has no SPI transport yet, so
+    `sweettouch=1` has nothing to talk to);
+  - **scaling issues remain** on the 720x1650 panel; the picture is not
+    correctly fitted, which conflicts with the 2026-10-23 note that patch
+    `0100` fixed the present path. Needs the image's build inputs to explain
+    (see below);
+  - **the clock advanced**, i.e. launchd/SpringBoard stayed alive for that whole
+    run with no panic and no crash. This is the strongest stability datapoint
+    for the fog port so far (previous best was a static frame + daemon spawn).
+- **Boot observed as bad (observation)**: applying the **touchscreen-patched
+  boot image** produced a **kernel panic** instead of reaching userspace.
+  Nothing is known yet about where it panicked.
+- **Unresolved / needed before debugging**:
+  1. `sha256`, byte size and cmdline of both images (good and panicking);
+  2. a photo of the panic screen, or `sweetlog=1` output pulled by booting the
+     diagnostic/TWRP again — the panel is the only console on this unit;
+  3. whether the good image was built with `FOG_TOUCH=0` and the bad one with
+     `FOG_TOUCH=1` from the same kernel artifact.
+- **Leading hypothesis (not verified)**: patch `0101` panics in the fog init
+  path it adds — `touch_clocks()` called unconditionally for `st.fog` and/or
+  `ml_io_map(0x04a80000)` / GCC vote writes on `0x1f144`/`0x1f148` before any
+  transfer code runs. Confirm by bisecting the patch (detection-only ->
+  +clocks -> +SE0 map) with one CI run each; do not guess at the Novatek
+  protocol until the panic is located.
+- **Consequence for planning**: the "display scaling fixed" claim in the
+  2026-10-23 handoff must be treated as unconfirmed on this build, and touch
+  work cannot be validated by a boot until `0101` stops panicking.
+
 - **Repo**: `MotoE7hype/ios-fog`, a fork of `AdyaGMD/ios-spes` (created via
   the GitHub API with the cached `MotoE7hype` credential; default branch
-  `fog`). Locally it is `C:\Users\boris\Documents\Predvolený projekt\ios-fog`
-  (renamed from `src`), `origin` = the fork, `upstream` = AdyaGMD. `fog` is
-  pushed through `dd4a261`.
+  `fog`). Locally it is now `C:\Users\boris\Documents\Default Project\ios-fog`
+  (formerly `C:\Users\boris\Documents\Predvolený projekt\ios-fog`, itself
+  renamed from `src`), `origin` = the fork, `upstream` = AdyaGMD. `fog` is
+  pushed through `dd4a261`; local build artifacts (`xnu/out`, `shim/out`,
+  `probe/`, `dtb/`) did not survive the re-clone and must be regenerated.
 - **Goal**: port the spes iOS 16 / XNU userland to the Redmi 10C `fog`
   (SM6225, 4 GB, 720x1650). Branch `fog` from `spes` (`c8f46db`). The RAM-only
-  diagnostic has booted on hardware (next bullet); no iOS userland yet.
+  diagnostic has booted on hardware and the full iOS image reaches SpringBoard
+  to the lock screen (2026-10-25); touch and display fitting are still open.
 - **ACTIVE HANDOFF 2026-10-23 — next task is the fog touch transport (Novatek
   SPI on QUPv3 SE0).** Display scaling + HID mapping landed in patch `0100`
   (`a951914`); the device now boots from the flashed boot image to the

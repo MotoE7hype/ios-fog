@@ -10,13 +10,14 @@ Upstream port, for reference: [MakrSas/ios-topaz](https://github.com/MakrSas/ios
 to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**, 6 GB physical RAM.
 The Android “+2 GB” expansion is not RAM available to this kernel.
 
-**This fork (`fog`): boots to SpringBoard on the live handset.** The test
+**This fork (`fog`): boots to the lock screen on the live handset.** The test
 handset reports `rain_global` (model 220333QNY) with Android 15 / HyperOS 2;
 the live FDT gives 720x1650, Novatek SPI touch and 1 GiB of RAM above 4 GiB.
-A Mac-built boot image now boots from `fastboot boot` to the lock/home screen
-with the clock visible (display scaling + HID mapping fixed in patch 0100).
-Touch transport (Novatek SPI on QUPv3 SE0) is still pending. See
-[docs/FOG-PORT.md](docs/FOG-PORT.md) for the measured facts.
+A Mac-built boot image boots from `fastboot boot` to the lock/home screen with
+a live clock (display scaling patched in `0100`, but still reported as not
+fitted), and stays up without panicking. Touch transport (Novatek SPI on QUPv3
+SE0) is still pending: the current touch-enabled build (`0101`) kernel-panics.
+See [docs/FOG-PORT.md](docs/FOG-PORT.md) for the measured facts.
 
 **Upstream status (2026-10-21): iOS 16.7.16 boots to its interface on spes.**
 The UI, touchscreen and volume buttons were confirmed on the spes handset.
@@ -29,15 +30,16 @@ explicit approval to erase Android data. Boot images are still loaded with
 `fastboot boot`; bootloaders, recovery, modem and persist are preserved.
 Apple filesystem images and device-specific dumps are not distributed here.
 
-## Redmi 10C (`fog`) — verified hardware, no boot yet
+## Redmi 10C (`fog`) — verified hardware, boots to the lock screen
 
 Branch `fog` adds a device profile for the Redmi 10C (SM6225, 4 GB, 720x1650).
 The hardware facts are now measured on a live unit (`rain_global` / 220333QNY,
 the Redmi 10 Power; fog ROMs are rain ROMs, so `--device rain` is also
 accepted): 720x1650@60 BOE panel, Novatek `NVT-ts` touch on QUPv3 SE0 SPI
 (`spi0.0`), 1 GiB of usable RAM above 4 GiB, splash at `0x5c000000`, A/B
-partitions without a `recovery` split. It has **not booted yet**, and
-touch/display are not ported: fog's touch is SPI, not spes' I²C part. The
+partitions without a `recovery` split. It **boots to the lock screen with a
+running clock**, but touch is not ported (fog's digitizer is SPI, not spes'
+I²C part) and the current touch-enabled build panics. The
 branch contains `--device fog|rain` ADT generation, a shared 4 GB-capable khaje
 memory selector, 720x1650 shim console overrides, RAM-only/full image
 builders, a read-only live-data probe and a slot-aware partition backup
