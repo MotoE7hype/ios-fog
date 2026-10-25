@@ -47,13 +47,18 @@ still be probed before booting.
 | --- | --- |
 | Reaches the lock screen | iOS userland/SpringBoard up on the 720x1650 panel |
 | Stays alive | the on-screen clock advances; no panic or crash during the run |
-| Touch | dead (`sweettouch=1` has no SPI transport to talk to) |
+| Touch | dead — patch `0101` had no SPI transport (rewritten 2026-10-25) |
 | Display scaling | still wrong — the 1125x2436 canvas is not fitted to the panel |
-| Touch-enabled build (`0101`) | **kernel panic** before userspace |
+| Touch-enabled build (`0101`) | **kernel panic** before userspace; cause found and fixed 2026-10-25 |
 
-The panicking image's `sha256`, cmdline and panic text were not captured, so
-the first job is to pin them down (see `NOTES.md`, 2026-10-25) and bisect
-`0101` — fog detection only, then clock votes, then the SE0 mapping.
+The panic came from the first version of `0101`: it called `touch_clocks()`
+from `sweet_touch_init()`, i.e. before the touch thread had mapped `st.gcc`, so
+the GCC vote write dereferenced a NULL window. No panic text was ever captured,
+so this is a reading of the patch, not a photographed backtrace. The rewrite
+votes the clocks inside `touch_fog_run()`, after the mapping succeeds, and the
+kernel now builds in CI. A new full iOS image with the rewritten driver exists
+(`rain-ios-touch.img`, below), but neither it nor the diagnostic build has been
+booted on the handset yet.
 
 ## Why this is not a copy of `spes`
 
@@ -66,10 +71,12 @@ the first job is to pin them down (see `NOTES.md`, 2026-10-25) and bisect
 | RAM | 6 GB, 3 GiB selected above 4 GiB | 4 GB, **1 GiB** above 4 GiB (verified) |
 | Splash | `0x5c000000`, `0xf00000` | `0x5c000000`, `0xf00000` (verified) |
 
-The inherited `sweet_touch.c` is an I2C driver. It cannot drive fog's SPI
-controller, and its coordinate clamp is 1080x2400. **Touch is intentionally
-off in the fog images** (`sweettouch=0`) until an SPI transport is implemented
-and tested.
+The inherited `sweet_touch.c` is an I2C driver. Patch `0101` now adds a
+separate fog path that drives the same file's novatek part over QUPv3 SE0 in
+GENI **SPI** FIFO mode (below); the spes I2C path is untouched and
+`st.fog` selects between them. Fog images still default to `sweettouch=0`,
+and `FOG_TOUCH=1` (or the `touch` input of the `fog-image` workflow) turns the
+SPI path on with `sweettouchdelay=5 sweettouchdiag=3`.
 
 Stock and live DT facts for that work (`khaje-idp.dtsi`, included by
 `fog.dtsi`; confirmed in the live FDT under `/soc/spi@4a80000/novatek@0`):
@@ -93,6 +100,59 @@ Stock and live DT facts for that work (`khaje-idp.dtsi`, included by
 `qupv3_se2_i2c`. The live digitizer is the SPI Novatek part, bound to the
 `NVT-ts` driver (`/sys/bus/spi/devices/spi0.0`), so the new transport should
 speak the Novatek SPI protocol (`swrst-n8` / fast-read registers above).
+
+## Touch transport (implemented in `0101`, 2026-10-25)
+
+`st.fog` (from `/fog-platform`) selects an SE0 path that never touches the
+spes I2C code. The register and protocol facts below were checked against
+Linux `spi-geni-qcom.c`, `qcom-geni-se.c`, `geni-se.h` and the vendor
+`nt36xxx.c`, not recalled from memory.
+
+- **Clocks**: GCC vote `0x7900c |= 0x7c0` (m_ahb, s_ahb, core, core_2x, SE0);
+  SE0 RCG `0x1f148` with parent BI_TCXO (19.2 MHz) and CFG = 0 (mode 0, no
+  divider); branch `0x1f144` bit 31 = halt. `SE_MCLK 0x48 = (2 << 4) | 1`
+  divides that by 2 → **9.6 MHz** SPI, matching
+  `spi-max-frequency = <0x927c00>`.
+- **SE mode**: FIFO (`SE_DMA 0x258 = 0`), GSI events off (`0xe18 = 0`),
+  `0xe1c = 0x4` (`GENI_M_IRQ_EN`), `SE_IRQ_EN 0x614` = done | errors |
+  rx-wm | rx-last | tx-wm, CGC `0x28 |= 0x7f`, `0xe30 |= 0xf`, `0x24 = 0x7f`,
+  `0x20 = 1`, `SE_CLK_SEL 0x7c = 0`. All status is polled; no GSI or DMA
+  channel is allocated, so nothing else may own SE0 at the same time.
+- **SPI framing**: `SE_SPI_TRANS_CFG 0x25c` clears `CS_TOGGLE`, so CS is
+  driven per primary command; `SE_SPI_WORD_LEN 0x268 = 4`
+  (bits_per_word − 4); 8-bit packing `0x260/0x264/0x284/0x288` =
+  `0x0007f8fe`/`0x000ffefe`; byte granularity `0x254 = 0`. One FIFO entry
+  carries four bytes, LSB first.
+- **Read framing matches the vendor driver**: `CTP_SPI_READ` masks the
+  address (`addr & 0x7f`), clocks `len + 1` bytes with a dummy byte after the
+  address and copies `rbuf + 2` into `buf + 1`. The split-command version
+  sends the masked address with `FRAGMENTATION` so CS stays asserted, then
+  clocks `n + 1` bytes in an `RX_ONLY` command, making `rx[1]` the first
+  valid byte. Page select is the vendor 3-byte write
+  `0xFF, addr >> 15, addr >> 7`.
+- **Page base**: `EVENT_BUF_ADDR` differs per NT36xxx variant, so
+  `0x21c00` (NT36672A), `0x11a00`, `0x22d00` and `0x11e00` are probed by
+  validating FWINFO at `+0x78` (`fw_ver + ~fw_ver == 0xFF`, plausible
+  `abs_x_max`/`abs_y_max` in either byte order). Coordinates are scaled from
+  the detected maxima to the 720x1650 panel before `sweet_hid_touch()`,
+  which then applies the 1125x2436 logical scale itself.
+- **Report frame**: 65 bytes of `EVENT_BUF_ADDR`; ten 6-byte records at
+  `6*i`, `id = data[0] >> 3`, `type = data[0] & 7` (1 down, 2 move),
+  `x = (data[1] << 4) | (data[3] >> 4)`,
+  `y = (data[2] << 4) | (data[3] & 0xf)`.
+- **Pins**: GPIO0-3 mux 1 (`qup0`), 6 mA, no pull; GPIO80 input, pull-up,
+  8 mA, active low; GPIO86 output, pull-up, 8 mA, reset low 20 ms then a
+  250 ms settle. Fog has no touch regulator node, unlike spes' AVDD GPIO.
+- **Console**: `SWEET TOUCH: fog gcc ...`, `fog se0 fw/proto ...`,
+  `fog pins ...`, `fog fwinfo page=... fw=...`, `fog novatek page=...`, then
+  `fog frames=... errors=...` every 500 polls with `sweettouchdiag=3`;
+  `sweettouchdiag=2` panics after ~30 s with the same counters plus raw
+  bytes.
+
+The driver stops instead of poking an unknown SE: it skips the probes when
+`0x68` proto != 1 (no SPI firmware), `0x64` bit 0 is set (FIFO interface
+disabled), or the SE reports busy / inherited FIFO data. Those prints are the
+first thing to read on the handset.
 
 ## What is in this branch
 
@@ -267,8 +327,11 @@ boots without the iPhone X identity.
    If the screen stays black, the splash base or panel geometry is wrong; the
    phone is still running Android and `fastboot reboot` recovers it. Nothing is
    written, so a full backup is only required before flashing.
-2. Only after PID 1 output: port SPI touch and verify coordinates. Do not
-   enable `sweettouch=1` before that; the I2C probe is meaningless on fog.
+2. Touch: `fastboot boot` the diagnostic image built with `touch=1`
+   (`sweettouch=1 sweettouchdelay=5 sweettouchdiag=3`, panel 720x1650). Read
+   the fog prints listed above. If `fog se0 fw` reports proto != 1 or
+   `ifdis` bit 0, the bootloader left SE0 without SPI firmware — retry after
+   one Android boot before considering a GSI/DMA rewrite.
 3. Install the iOS root into `userdata` only with explicit approval and a
    verified backup. Then `build-fog-ios.sh`.
 4. Display: patch `0100-sweet-fb-present-scale.patch` adds a resample in the
@@ -285,9 +348,9 @@ bring-up. `fastboot boot` is enough.
 ## Open items
 
 - Live FDT: RAM banks, reserved regions, real splash base, board revision.
-- Touch: confirm controller (Novatek NT36xxx vs FocalTech FT3518) from
-  `/sys/bus/spi/devices` / the stock DTBO, then implement QUPv3 SE0 SPI in
-  `sweet_touch.c` (reset GPIO 86, IRQ 80) with a fog coordinate clamp.
+- Touch: first handset boot of the SE0 GENI SPI path (rewrite of `0101`,
+  2026-10-25); verify proto/FIFO/FWINFO prints, then coordinates and the
+  720x1650 clamp, then multi-touch.
 - Display: 720x1650 present/scaling and HID mapping (see step 4).
 - Panel/backlight: ABL leaves the splash on; brightness control is untested.
 - Keys/PMIC, UFS, GPU, Wi-Fi: inherited from spes patches but unverified on

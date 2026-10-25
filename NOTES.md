@@ -1,5 +1,77 @@
 # ios-fog (fog/rain/wind) port — scaffolding + verified hardware, 2026-10-22
 
+## 2026-10-25 (evening) — SE0 GENI SPI touch implemented, kernel and images build
+
+**Status: code complete and compiling; no handset boot yet** (`adb devices` and
+`fastboot devices` are both empty as of this note, so nothing was sent).
+
+- **Panic cause (diagnosis, no backtrace captured)**: the first `0101` called
+  `touch_clocks()` from `sweet_touch_init()`. That runs before `touch_thread()`
+  maps `st.gcc`, so the fog branch dereferenced `st.gcc + 0x7900c` with
+  `st.gcc == 0`. The call is gone; all fog clock work now happens inside
+  `touch_fog_run()`, after `ml_io_map()` succeeded.
+- **What `0101` does now** (`bsd/dev/sweet_touch.c`, selected by `st.fog`):
+  QUPv3 SE0 as a GENI **SPI** master in FIFO mode, no GSI and no DMA.
+  - clocks: GCC vote `0x7900c |= 0x7c0`, SE0 RCG `0x1f148` on BI_TCXO
+    (19.2 MHz, CFG 0), branch `0x1f144` bit 31; `SE_MCLK = (2<<4)|1` → 9.6 MHz.
+  - transport: `SE_SPI_TRANS_CFG` clears `CS_TOGGLE`, so CS is driven per
+    primary command; a register read is two commands — the masked address byte
+    with `FRAGMENTATION` (CS stays low), then `RX_ONLY` for `n+1` bytes, so
+    `rx[1]` is the first valid byte exactly like the vendor `CTP_SPI_READ()`
+    (`addr & 0x7f`, one dummy byte, `memcpy(buf+1, rbuf+2, len-1)`).
+    Page select is the vendor 3-byte write `0xFF, addr>>15, addr>>7`.
+  - probe: FWINFO at `+0x78` is validated for page bases `0x21c00` (NT36672A),
+    `0x11a00`, `0x22d00`, `0x11e00` (`fw_ver + ~fw_ver == 0xFF` plus plausible
+    dimensions in either byte order), then contacts are scaled from the
+    detected `abs_x/y_max` to 720x1650 before `sweet_hid_touch()`.
+  - refuses to continue (instead of poking an unknown SE) when `0x68` proto is
+    not 1 (no SPI firmware), `0x64` bit 0 says the FIFO interface is disabled,
+    or the SE is busy / holds inherited FIFO data. Those prints decide the next
+    step on hardware.
+- **Build verification**: patch regenerated from the pre-`0101` file, applied to
+  a clean copy and reproduces the source byte-for-byte (`git apply`, sha256
+  match). `xnu` CI run **`40230084504`** on `98d0d50` = **success**; the only
+  `sweet_touch.c` diagnostics are `-Wdeclaration-after-statement` notes.
+  Kernel artifact `kernel.development.sweet` = 17,860,448 bytes.
+- **Images built from that kernel** (all `rain` identity,
+  `FOG_MEMORY=0x100000000:0x40000000`):
+  - diagnostic, touch **off**: `fog-image` run **`40230688679`**,
+    `rain-diagnostic.img` 17,457,152 B, sha256
+    `c36a48b0e2f58e51aeefbcf991c5b4f3a06147f3e4816ff0a36a9d9571160bde`.
+  - diagnostic, touch **on** (`sweettouch=1 sweettouchdelay=5
+    sweettouchdiag=3 sweetfb_panel_w=720 sweetfb_panel_h=1650`, confirmed in
+    the packed payload cmdline): `fog-image` run **`40231047408`**, 17,457,152 B,
+    sha256 `42127cb23e6d3b9ce18f338a98a47ca182c3365d1aebe364b5fcc4c4ab260ea3`.
+    Local copy `shim/out/rain-diagnostic-touch.img` (git-ignored).
+  - full iOS, touch **on** (same kernel, `FOG_TOUCH=1`, built on the Mac):
+    `shim/out/rain-ios-touch.img`, 17,444,864 B, sha256
+    `cf649ec341407513c198be69fb32b25bda4766d354372d2d2cb202b44be296b5`;
+    cmdline `... ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10 sweettouch=1
+    sweetfb_panel_w=720 sweetfb_panel_h=1650 ...`. This **replaced** the
+    panicking `361a4d5d...` image on the Mac (`shim/out/rain-ios.img`), which
+    was the only surviving copy; only its hash is recorded now.
+- **Mac build gotchas (recorded because they cost two attempts)**: a
+  non-interactive `ssh mac` shell has `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, so
+  prepend `/usr/local/bin` for `aarch64-linux-gnu-*`; `shim/build.sh` needs
+  `MKBOOTIMG=$PWD/tools/vendor/mkbootimg/mkbootimg.py`.
+- **New build knobs**: `tools/build-fog-diagnostic.sh` takes `FOG_TOUCH`,
+  `FOG_TOUCH_DELAY` (default 5) and `FOG_TOUCH_DIAG` (default 3); the
+  `fog-image` workflow exposes them as the `touch` dispatch input (default 0).
+  `tools/build-fog-ios.sh` keeps `FOG_TOUCH` and now honours optional
+  `FOG_TOUCH_DELAY` / `FOG_TOUCH_DIAG` (unset = driver default 45 s, no stats).
+- **Next concrete action**: with the phone in fastboot, boot
+  `shim/out/rain-diagnostic-touch.img` first (RAM only, prints are on screen).
+  Read, in order, `SWEET TOUCH: fog gcc ...`, `fog se0 fw/proto ...`,
+  `fog pins ...`, `fog fwinfo page=...`, `fog novatek page=...`, then
+  `fog frames=... down=...` while touching the panel. Only then boot
+  `rain-ios-touch.img` and check the lock-screen swipe.
+- **Decision tree if the diagnostic stops**: `proto != 1` or `ifdis` bit 0 →
+  boot Android once (warm reboot may leave ABL-loaded SE firmware in place) and
+  retry; a hang after `fog gcc`/`fog se0` with no `fog pins` means the SE access
+  itself blocks, which points at the clock vote or a wrong SE instance; a
+  clean `fog pins` but failing transfers points at CS/framing, not power.
+
+
 ## 2026-10-25 — lock screen confirmed stable; touch-enabled build panics (user report)
 
 - **Source**: user report on 2026-10-25. Recorded verbatim as an observation; no

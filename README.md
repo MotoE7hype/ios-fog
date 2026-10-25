@@ -21,8 +21,8 @@ Open issues:
 
 | Item | State |
 | --- | --- |
-| Touch | Not ported. The digitizer is Novatek `NVT-ts` on QUPv3 **SE0 SPI**; `bsd/dev/sweet_touch.c` is the inherited **I2C** bring-up and never reaches it. |
-| Touch-enabled build | Patch `0101` (fog SPI bring-up) **kernel-panics** before userspace; the failing init step is not yet isolated. |
+| Touch | Implemented in patch `0101`: Novatek `NVT-ts` on QUPv3 **SE0 GENI SPI**, FIFO mode, split TX/RX commands with CS held across a register read. Not yet booted on the handset, so it is unproven. |
+| Touch-enabled build | The first `0101` **kernel-panicked** because it voted the GCC clocks before mapping them; the rewrite maps first and builds clean in CI. |
 | Display scaling | Patch `0100` adds the present-path resample, but the 1125x2436 canvas is still reported as not fitted on the 720x1650 panel. |
 | Keys, UFS, GPU, Wi-Fi, SMP | Inherited, unverified here. Keep `sweetkeys=0 sweethw=0` until each is tested. |
 
@@ -73,8 +73,9 @@ notes for the SPI work.
   `/proc` data and the SPI/DRM/backlight sysfs.
 - `xnu/patches/0100-sweet-fb-present-scale.patch` — present-path scaling and
   HID panel-size mapping, gated on `/fog-platform`.
-- `xnu/patches/0101-fog-novatek-spi-touch.patch` — fog detection, SE0 clock
-  votes and SE0 mapping only; it currently panics (see Status).
+- `xnu/patches/0101-fog-novatek-spi-touch.patch` — fog detection plus the SE0
+  GENI SPI transport: clocks, SE init, Novatek page/FWINFO probe, report
+  parser and 720x1650 coordinate scaling.
 - `tests/test_fog.py` — ADT geometry, 4 GB memory selection, upstream-profile
   preservation.
 
@@ -82,7 +83,7 @@ notes for the SPI work.
 
 `.github/workflows/xnu.yml` builds XNU on macOS runners (manual dispatch) and
 applies the whole patch series. Download the `xnu-kernel` artifact into
-`xnu/out`. The current `fog` tip built successfully in run `40082826798`.
+`xnu/out`. The current `fog` tip built successfully in run `40230084504`.
 
 No local toolchain is required for the boot images either:
 `.github/workflows/fog-image.yml` builds a diagnostic on `ubuntu-latest` from a
@@ -118,8 +119,10 @@ CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/tools/vendor/mkbootimg/mkbootimg.py" 
   tools/build-fog-ios.sh xnu/out/kernel.development.sweet
 ```
 
-`FOG_TOUCH=1` adds `sweettouch=1 sweetfb_panel_w/h` — **do not use it until
-patch `0101` stops panicking**. `/product` comes from
+`FOG_TOUCH=1` adds `sweettouch=1 sweetfb_panel_w/h` and enables the `0101` SE0
+SPI driver; `FOG_TOUCH_DELAY` and `FOG_TOUCH_DIAG` shorten the 45 s start delay
+and add the periodic statistics print. Check the `SWEET TOUCH: fog ...` console
+lines before trusting the panel. `/product` comes from
 `research/ipsw-x/d22ap.adt` when present; otherwise the image boots without the
 iPhone X identity.
 

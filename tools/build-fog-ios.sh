@@ -26,7 +26,15 @@ esac
 panel_w=${FOG_PANEL_W:-720}
 panel_h=${FOG_PANEL_H:-1650}
 case ${FOG_TOUCH:-0} in
-    1|true|yes) touch_args="sweettouch=1 sweetfb_panel_w=$panel_w sweetfb_panel_h=$panel_h" ;;
+    1|true|yes)
+        touch_args="sweettouch=1 sweetfb_panel_w=$panel_w sweetfb_panel_h=$panel_h"
+        # Optional: shorten the 45 s start delay, or add the periodic stats print.
+        if [ -n "${FOG_TOUCH_DELAY:-}" ]; then
+            touch_args="$touch_args sweettouchdelay=$FOG_TOUCH_DELAY"
+        fi
+        if [ -n "${FOG_TOUCH_DIAG:-}" ]; then
+            touch_args="$touch_args sweettouchdiag=$FOG_TOUCH_DIAG"
+        fi ;;
     0|false|no) touch_args="sweettouch=0" ;;
     *) echo "FOG_TOUCH must be 0 or 1" >&2; exit 2 ;;
 esac
