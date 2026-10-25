@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
-index 2f09d3f..e64b01e 100644
+index 2f09d3f..5ce72af 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
 @@ -23,6 +23,10 @@
@@ -13,7 +13,7 @@ index 2f09d3f..e64b01e 100644
  extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-@@ -45,6 +49,51 @@ void sweet_touch_init(void);
+@@ -45,6 +49,53 @@ void sweet_touch_init(void);
  #define TOUCH_GPIO_IO(n)  (TOUCH_GPIO_CFG(n) + 4u)
  #define TOUCH_MAX        10u
  #define TOUCH_GOODIX     1
@@ -43,6 +43,7 @@ index 2f09d3f..e64b01e 100644
 +#define SE_GENI_S_IRQ_CLR 0x648u
 +#define SE_GENI_BYTE_GRAN 0x254u
 +#define SE_SPI_CPHA      0x224u
++#define SE_SPI_LOOPBACK  0x22cu
 +#define SE_SPI_CPOL      0x230u
 +#define SE_SPI_DEMUX_INV 0x24cu
 +#define SE_SPI_DEMUX_SEL 0x250u
@@ -53,6 +54,7 @@ index 2f09d3f..e64b01e 100644
 +#define SE_SPI_RX_TRANS_LEN 0x270u
 +#define SPI_TX_ONLY      1u
 +#define SPI_RX_ONLY      2u
++#define SPI_TX_RX        7u      /* spi-geni-qcom.h: duplex, not 3 */
 +#define SPI_FRAGMENT     4u      /* keep CS asserted after this command */
 +
 +#define NVT_PAGE_CMD          0xFFu
@@ -65,7 +67,20 @@ index 2f09d3f..e64b01e 100644
  #define TOUCH_FTS        2
  /* GT9896 is Yellowstone in Xiaomi sweet-r-oss, not the Berlin protocol. */
  #define GOODIX_PID_REG   0x4022u
-@@ -87,7 +136,7 @@ void sweet_touch_init(void);
+@@ -71,7 +122,12 @@ void sweet_touch_init(void);
+ #define SE_RX_COUNT     0x804u
+ #define SE_HW_TX        0xe24u
+ #define SE_HW_RX        0xe28u
++#define SE_IOS          0x908u
++#define SE_CMD_ERR      0x624u
++#define SE_FW_ERR       0x628u
+ #define SE_TX_WM        0x80cu
++#define SE_RX_WM        0x810u
++#define SE_RFR_WM       0x814u
+ #define SE_RX_WM_IRQ    (1u << 26)
+ #define SE_RX_LAST      (1u << 27)
+ #define SE_TX_WM_IRQ    (1u << 30)
+@@ -87,9 +143,11 @@ void sweet_touch_init(void);
  
  static struct {
  	vm_offset_t se, gcc, west, east;
@@ -73,8 +88,12 @@ index 2f09d3f..e64b01e 100644
 +	bool spes, fog;
  	bool started, dead, probing;
  	int kind, irq_hint;
++	int fog_read_mode;      /* -1 unknown, 0 duplex, 1 split TX/RX */
++	unsigned fog_depth, fog_width;
  	uint32_t irq_status, irq_last, active;
-@@ -179,6 +228,25 @@ touch_clocks(void)
+ 	unsigned sent, got;
+ 	int x[TOUCH_MAX], y[TOUCH_MAX];
+@@ -179,6 +237,25 @@ touch_clocks(void)
  	 * shared vote register (other bits belong to other clients), XO parent
  	 * with divider 1 = 19.2 MHz, no PLL or voltage change.
  	 */
@@ -100,7 +119,7 @@ index 2f09d3f..e64b01e 100644
  	touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | 0x13c0u);
  	printf("SWEET TOUCH: gcc vote=%#x rcg=%#x cfg=%#x cbcr=%#x\n",
  	    touch_rd(st.gcc, TOUCH_GCC_VOTE), touch_rd(st.gcc, TOUCH_RCG),
-@@ -608,6 +676,407 @@ touch_se_init(void)
+@@ -608,6 +685,536 @@ touch_se_init(void)
  	return true;
  }
  
@@ -125,7 +144,7 @@ index 2f09d3f..e64b01e 100644
 +{
 +	uint32_t count = touch_rd(st.se, SE_RX_COUNT) & 0x1ffffffu;
 +
-+	if (count > 32u) {
++	if (count > 64u) {
 +		return EIO;
 +	}
 +	while (count-- && *got < nr) {
@@ -137,18 +156,64 @@ index 2f09d3f..e64b01e 100644
 +	return 0;
 +}
 +
++/* One-line SE snapshot, printed for the first few failed commands only. */
++static unsigned fog_dumps;
++
++static void
++touch_fog_dump(void)
++{
++	if (fog_dumps++ >= 4u) {
++		return;
++	}
++	printf("SWEET TOUCH: fog regs dma=%#x miren=%#x mirq=%#x status=%#x "
++	    "txst=%#x rxst=%#x txlen=%#x rxlen=%#x\n",
++	    touch_rd(st.se, SE_DMA), touch_rd(st.se, SE_IRQ_EN),
++	    touch_rd(st.se, SE_IRQ), touch_rd(st.se, SE_STATUS),
++	    touch_rd(st.se, SE_TX_COUNT), touch_rd(st.se, SE_RX_COUNT),
++	    touch_rd(st.se, SE_TX_LEN), touch_rd(st.se, SE_RX_LEN));
++	printf("SWEET TOUCH: fog regs rwm=%#x rfr=%#x ios=%#x cmd_err=%#x "
++	    "fw_err=%#x cfg=%#x word=%#x gran=%#x hw=%#x/%#x\n",
++	    touch_rd(st.se, SE_RX_WM), touch_rd(st.se, SE_RFR_WM),
++	    touch_rd(st.se, SE_IOS), touch_rd(st.se, SE_CMD_ERR),
++	    touch_rd(st.se, SE_FW_ERR), touch_rd(st.se, SE_SPI_TRANS_CFG),
++	    touch_rd(st.se, SE_SPI_WORD_LEN), touch_rd(st.se, SE_GENI_BYTE_GRAN),
++	    touch_rd(st.se, SE_HW_TX), touch_rd(st.se, SE_HW_RX));
++}
++
++/* Queue as many packed FIFO words of tx[] as the TX FIFO currently holds. */
++static void
++touch_fog_fill_tx(const uint8_t *tx, unsigned nt, unsigned *sent, unsigned depth)
++{
++	while (*sent * 4u < nt &&
++	    (touch_rd(st.se, SE_TX_COUNT) & 0xffffffu) + 2u < depth) {
++		unsigned base = *sent * 4u;
++		uint32_t word = 0;
++		for (unsigned j = 0; j < 4u && base + j < nt; ++j) {
++			word |= (uint32_t)tx[base + j] << (8u * j);
++		}
++		touch_wr(st.se, SE_TX, word);
++		(*sent)++;
++	}
++}
++
 +/* One primary-sequencer FIFO command; lengths are in SPI words = bytes. */
++static unsigned fog_logs;
++
 +static int
 +touch_spi_run(unsigned opcode, unsigned params, const uint8_t *tx, unsigned nt,
 +    uint8_t *rx, unsigned nr)
 +{
-+	if (st.dead || (!nt && !nr) || nt > 4 || nr > 96) {
++	unsigned words = (nt + 3u) / 4u, sent = 0, got = 0;
++	unsigned depth = st.fog_depth ? st.fog_depth : 16u;
++
++	if (st.dead || (!nt && !nr) || nt > 96 || nr > 96) {
 +		return EINVAL;
 +	}
 +	if (!touch_wait_clear(st.se, SE_STATUS, 1u)) {
 +		st.dead = true; /* no other SE0 owner is supported */
 +		return EBUSY;
 +	}
++	st.irq_status = st.irq_last = 0;
 +	touch_wr(st.se, SE_IRQ_CLR, 0xffffffffu);
 +	touch_wr(st.se, SE_TX_WM, 0);
 +	if (nt) {
@@ -158,20 +223,14 @@ index 2f09d3f..e64b01e 100644
 +		touch_wr(st.se, SE_RX_LEN, nr);
 +	}
 +	touch_wr(st.se, SE_CMD, (opcode << 27) | (params & 0x7ffffffu));
-+	/* spi-geni-qcom.c fills the FIFO right after the command; a one-word
-+	 * write needs no watermark interrupt (the whole transfer is 4 bytes). */
-+	if (nt) {
-+		uint32_t word = 0;
-+		for (unsigned j = 0; j < nt; ++j) {
-+			word |= (uint32_t)tx[j] << (8u * j);
-+		}
-+		touch_wr(st.se, SE_TX, word);
-+	}
++	/* A truncated duplex read is larger than the TX FIFO, so keep feeding
++	 * it from the poll loop (Linux does the same from TX watermark IRQs). */
++	touch_fog_fill_tx(tx, nt, &sent, depth);
 +
-+	unsigned got = 0;
 +	int err = ETIMEDOUT;
-+	for (unsigned i = 0; i < 5000; ++i) {
++	for (unsigned i = 0; i < 20000; ++i) {
 +		uint32_t irq = touch_irq();
++		touch_fog_fill_tx(tx, nt, &sent, depth);
 +		if (irq & SE_ERRORS) {
 +			err = EIO;
 +			break;
@@ -182,24 +241,29 @@ index 2f09d3f..e64b01e 100644
 +		if (irq & SE_DONE) {
 +			/* DONE may be visible before the last RX word lands. */
 +			(void)touch_fog_drain(rx, nr, &got);
-+			if (touch_irq() & SE_ERRORS) {
++			err = (touch_irq() & SE_ERRORS) ? EIO : 0;
++			if (!err && (got < nr || sent < words)) {
 +				err = EIO;
-+				break;
 +			}
 +			touch_wr(st.se, SE_IRQ_CLR, 0xffffffffu);
-+			if (got == nr) {
++			if (!err) {
 +				return 0;
 +			}
-+			err = EIO;
 +			break;
 +		}
 +		touch_wr(st.se, SE_IRQ_CLR, irq & (SE_RX_WM_IRQ | SE_RX_LAST));
 +		delay(1);
 +	}
-+	if (st.probing || err != ETIMEDOUT) {
++	if (!err && (got < nr || sent < words)) {
++		err = EIO;
++	}
++	/* Probing retries the same read several times; keep the log readable. */
++	if (fog_logs++ < 6u) {
 +		printf("SWEET TOUCH: fog spi op=%u frag=%u nt=%u nr=%u err=%d "
-+		    "irq=%#x got=%u status=%#x\n", opcode, params >> 2, nt, nr,
-+		    err, st.irq_last, got, touch_rd(st.se, SE_STATUS));
++		    "irq=%#x got=%u txw=%u/%u status=%#x\n", opcode, params >> 2,
++		    nt, nr, err, st.irq_last, got, sent, words,
++		    touch_rd(st.se, SE_STATUS));
++		touch_fog_dump();
 +	}
 +	touch_abort();
 +	return err;
@@ -218,32 +282,76 @@ index 2f09d3f..e64b01e 100644
 +}
 +
 +/*
-+ * Vendor CTP_SPI_READ() framing: one masked address byte (bit 7 clear) and
-+ * then N data bytes, where the byte clocked together with the address and
-+ * one more are dummies. Splitting at the command boundary therefore puts
-+ * the first valid byte at rx[1].
++ * CTP_SPI_READ() framing: the masked address byte, one dummy byte, then the
++ * payload - its rbuf copy starts at +2, not +1.  The vendor clocks that as a
++ * single duplex transfer; splitting it into TX then RX_ONLY is the fallback.
 + */
 +static int
-+touch_fog_read(uint32_t addr, uint8_t *buf, unsigned n)
++touch_fog_read_duplex(uint32_t addr, uint8_t *buf, unsigned n)
++{
++	uint8_t tx[96], rx[96];
++	int err;
++
++	memset(tx, 0, sizeof(tx));
++	rx[0] = rx[1] = 0;
++	tx[0] = (uint8_t)(addr & 0x7fu);
++	if ((err = touch_spi_run(SPI_TX_RX, 0, tx, n + 2u, rx, n + 2u)) != 0) {
++		return err;
++	}
++	memcpy(buf, rx + 2, n);
++	return 0;
++}
++
++static int
++touch_fog_read_split(uint32_t addr, uint8_t *buf, unsigned n)
 +{
 +	uint8_t a = (uint8_t)(addr & 0x7fu);
 +	uint8_t rx[96];
 +	int err;
 +
-+	if (n == 0 || n + 1 > sizeof(rx)) {
++	if ((err = touch_spi_run(SPI_TX_ONLY, SPI_FRAGMENT, &a, 1, NULL, 0)) != 0) {
++		return err;
++	}
++	if ((err = touch_spi_run(SPI_RX_ONLY, 0, NULL, 0, rx, n + 2u)) != 0) {
++		return err;
++	}
++	memcpy(buf, rx + 2, n);
++	return 0;
++}
++
++static int
++touch_fog_read(uint32_t addr, uint8_t *buf, unsigned n)
++{
++	int err;
++
++	if (n == 0 || n + 2u > 96u) {
 +		return EINVAL;
 +	}
 +	if ((err = touch_fog_set_page(addr)) != 0) {
 +		return err;
 +	}
-+	if ((err = touch_spi_run(SPI_TX_ONLY, SPI_FRAGMENT, &a, 1, NULL, 0)) != 0) {
++	if (st.fog_read_mode < 0) {
++		err = touch_fog_read_duplex(addr, buf, n);
++		if (!err) {
++			st.fog_read_mode = 0;
++			printf("SWEET TOUCH: fog read mode=duplex\n");
++			return 0;
++		}
++		if (st.dead) {
++			return err;
++		}
++		err = touch_fog_read_split(addr, buf, n);
++		if (!err) {
++			st.fog_read_mode = 1;
++			printf("SWEET TOUCH: fog read mode=split\n");
++			return 0;
++		}
 +		return err;
 +	}
-+	if ((err = touch_spi_run(SPI_RX_ONLY, 0, NULL, 0, rx, n + 1)) != 0) {
-+		return err;
++	if (st.fog_read_mode == 0) {
++		return touch_fog_read_duplex(addr, buf, n);
 +	}
-+	memcpy(buf, rx + 1, n);
-+	return 0;
++	return touch_fog_read_split(addr, buf, n);
 +}
 +
 +/* Validate FWINFO at page+0x78 (fw_ver + ~fw_ver == 0xFF, sane panel). */
@@ -354,14 +462,27 @@ index 2f09d3f..e64b01e 100644
 +{
 +	uint32_t fw = touch_rd(st.se, SE_FW);
 +	uint32_t tx = touch_rd(st.se, SE_HW_TX), rx = touch_rd(st.se, SE_HW_RX);
++	unsigned depth, width;
 +
 +	st.d_fw = fw;
 +	st.d_status = touch_rd(st.se, SE_STATUS);
 +	st.d_hwtx = tx;
 +	st.d_hwrx = rx;
++	/* SE_HW_PARAM_1: RX FIFO width in bits (29:24), depth in words (21:16). */
++	depth = (rx >> 16) & 0x3fu;
++	width = (rx >> 24) & 0x3fu;
++	if (depth < 4u || depth > 64u) {
++		depth = 16u;
++	}
++	if (width < 8u || width > 64u) {
++		width = 32u;
++	}
++	st.fog_depth = depth;
++	st.fog_width = width;
 +	printf("SWEET TOUCH: fog se0 fw=%#x proto=%u status=%#x tx=%#x rx=%#x "
-+	    "ifdis=%#x\n", fw, (fw >> 8) & 0xffu, touch_rd(st.se, SE_STATUS),
-+	    tx, rx, touch_rd(st.se, 0x64));
++	    "ifdis=%#x depth=%u width=%u\n", fw, (fw >> 8) & 0xffu,
++	    touch_rd(st.se, SE_STATUS), tx, rx, touch_rd(st.se, 0x64), depth,
++	    width);
 +	if (((fw >> 8) & 0xffu) != 1u) {
 +		printf("SWEET TOUCH: SE0 has no GENI SPI firmware; probes skipped\n");
 +		return false;
@@ -404,13 +525,17 @@ index 2f09d3f..e64b01e 100644
 +	touch_wr(st.se, 0x284, SE_PACK0);
 +	touch_wr(st.se, 0x288, SE_PACK1);
 +	touch_wr(st.se, SE_TX_WM, 0);
-+	touch_wr(st.se, 0x810, 0);
-+	touch_wr(st.se, 0x814, 0);
++	/* Linux geni_se_init(): rx_wm = depth-3, RFR = depth-2.  Leaving both
++	 * at 0 leaves the RX side unable to start streaming. */
++	touch_wr(st.se, SE_RX_WM, depth > 3u ? depth - 3u : 1u);
++	touch_wr(st.se, SE_RFR_WM, depth > 2u ? depth - 2u : 1u);
 +	touch_wr(st.se, SE_IRQ_EN, SE_EVENTS);
 +	printf("SWEET TOUCH: fog spi mclk=%#x wordlen=%#x trans=%#x pack=%#x/%#x "
-+	    "gran=%#x\n", touch_rd(st.se, SE_MCLK), touch_rd(st.se, SE_SPI_WORD_LEN),
-+	    touch_rd(st.se, SE_SPI_TRANS_CFG), touch_rd(st.se, 0x260),
-+	    touch_rd(st.se, 0x264), touch_rd(st.se, SE_GENI_BYTE_GRAN));
++	    "gran=%#x rwm=%#x rfr=%#x\n", touch_rd(st.se, SE_MCLK),
++	    touch_rd(st.se, SE_SPI_WORD_LEN), touch_rd(st.se, SE_SPI_TRANS_CFG),
++	    touch_rd(st.se, 0x260), touch_rd(st.se, 0x264),
++	    touch_rd(st.se, SE_GENI_BYTE_GRAN), touch_rd(st.se, SE_RX_WM),
++	    touch_rd(st.se, SE_RFR_WM));
 +	if (touch_rd(st.se, 0x260) != SE_PACK0 || touch_rd(st.se, 0x264) != SE_PACK1 ||
 +	    touch_rd(st.se, SE_GENI_BYTE_GRAN) != 0) {
 +		printf("SWEET TOUCH: fog packing readback mismatch; probes skipped\n");
@@ -424,6 +549,22 @@ index 2f09d3f..e64b01e 100644
 +	return true;
 +}
 +
++/* Internal MOSI->MISO loopback: proves the RX FIFO/opcode path without the
++ * panel.  Four duplex bytes must come back verbatim. */
++static void
++touch_fog_loopback(void)
++{
++	static const uint8_t pat[4] = { 0xa5u, 0x5au, 0x3cu, 0xc3u };
++	uint8_t rx[8];
++
++	memset(rx, 0, sizeof(rx));
++	touch_wr(st.se, SE_SPI_LOOPBACK, 1);
++	int err = touch_spi_run(SPI_TX_RX, 0, pat, 4, rx, 4);
++	touch_wr(st.se, SE_SPI_LOOPBACK, 0);
++	printf("SWEET TOUCH: fog loopback err=%d rx=%02x %02x %02x %02x ios=%#x\n",
++	    err, rx[0], rx[1], rx[2], rx[3], touch_rd(st.se, SE_IOS));
++}
++
 +/* Whole fog bring-up: clocks, SE0, pins, reset, FWINFO probe, poll loop. */
 +static void
 +touch_fog_run(void)
@@ -432,8 +573,15 @@ index 2f09d3f..e64b01e 100644
 +	if (!touch_clocks()) {
 +		return;
 +	}
++	st.fog_read_mode = -1;
 +	st.stage = "fog se0";
 +	if (!touch_fog_se_init()) {
++		return;
++	}
++	/* Run the internal loopback before the SPI pins are muxed to the QUP:
++	 * its pattern must never reach the panel. */
++	touch_fog_loopback();
++	if (st.dead) {
 +		return;
 +	}
 +	st.stage = "fog pins";
@@ -508,7 +656,7 @@ index 2f09d3f..e64b01e 100644
  /* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
   * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
   * or PMIC request is taken until the inherited bootloader state is known.
-@@ -1569,15 +2038,20 @@ touch_thread(void *arg, wait_result_t result)
+@@ -1569,15 +2176,20 @@ touch_thread(void *arg, wait_result_t result)
  	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
  	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
  	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
@@ -532,7 +680,7 @@ index 2f09d3f..e64b01e 100644
  	st.stage = "clocks";
  	if (!touch_clocks()) {
  		goto out;
-@@ -1680,6 +2154,14 @@ out:
+@@ -1680,6 +2292,14 @@ out:
  		printf("SPES TOUCH: stopped at %s dead=%d id=%02x:%02x errors=%d/%d\n",
  		    st.stage ? st.stage : "?", st.dead, st.d_fid1, st.d_fid2,
  		    st.d_fe1, st.d_fe2);
@@ -547,7 +695,7 @@ index 2f09d3f..e64b01e 100644
  	}
  	if (st.diag && st.diag != 3) {
  		panic("SWEET TOUCH diag: stopped at '%s' dead=%d | gcc vote=%#x cfg=%#x cbcr=%#x | "
-@@ -1702,7 +2184,8 @@ sweet_touch_init(void)
+@@ -1702,7 +2322,8 @@ sweet_touch_init(void)
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
@@ -557,7 +705,7 @@ index 2f09d3f..e64b01e 100644
  	st.started = true;
  	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
  	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
-@@ -1734,5 +2217,11 @@ spes_touch_probe(void)
+@@ -1734,5 +2355,11 @@ spes_touch_probe(void)
  	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
  		sweet_touch_init();
  	}
