@@ -24,6 +24,9 @@ on:
       memory:
         description: RAM range BASE:SIZE measured on the target unit
         default: "0x100000000:0x40000000"
+      touch:
+        description: "1 = run the fog SPI touch driver with console diagnostics (sweettouchdelay/diag)"
+        default: "0"
 
 permissions:
   contents: read
@@ -41,6 +44,7 @@ jobs:
       DEVICE: ${{ inputs.device }}
       MEMORY: ${{ inputs.memory }}
       KERNEL_RUN: ${{ inputs.kernel_run }}
+      TOUCH: ${{ inputs.touch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +91,7 @@ jobs:
       - name: Build diagnostic image
         run: |
           CROSS_COMPILE=aarch64-linux-gnu- \
-            FOG_DEVICE="$DEVICE" FOG_MEMORY="$MEMORY" \
+            FOG_DEVICE="$DEVICE" FOG_MEMORY="$MEMORY" FOG_TOUCH="$TOUCH" \
             tools/build-fog-diagnostic.sh "$KERNEL"
 
       - name: Summary

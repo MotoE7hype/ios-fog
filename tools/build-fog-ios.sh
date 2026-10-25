@@ -49,8 +49,8 @@ python3 tools/mkadt.py "shim/out/$name.adt" --device "$device" $memory_args
 # The panel is 720x1650 but iOS renders into a 1125x2436 logical canvas, so
 # the framebuffer resamples (sweetfb_scale default on /fog-platform) and the
 # HID layer maps contacts through the same scale. sweettouch stays off unless
-# FOG_TOUCH=1: the inherited sweet_touch.c is spes' I2C part and cannot drive
-# fog's QUPv3 SE0 SPI digitizer.
+# FOG_TOUCH=1; the fog path drives the Novatek part over QUPv3 SE0 GENI SPI
+# (patch 0101), not the inherited spes I2C code.
 python3 tools/mkpayload.py "$kernel" "shim/out/$name.adt" "shim/out/$name.payload" \
     --cmdline 'debug=0xc serial=3 cpus='"$cpus"' keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10 '"$touch_args"' sweetkeys=0 sweethw=0 sweetfb_stayon=1 sweetfb_noconsole=1'
 SHIM_FB_W=$panel_w SHIM_FB_H=$panel_h BOOT_HEADER_VERSION=3 shim/build.sh "out/$name.payload"
