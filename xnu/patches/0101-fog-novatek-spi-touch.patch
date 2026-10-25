@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
-index 2f09d3f..5ce72af 100644
+index 2f09d3f..35debbc 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
 @@ -23,6 +23,10 @@
@@ -119,7 +119,7 @@ index 2f09d3f..5ce72af 100644
  	touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | 0x13c0u);
  	printf("SWEET TOUCH: gcc vote=%#x rcg=%#x cfg=%#x cbcr=%#x\n",
  	    touch_rd(st.gcc, TOUCH_GCC_VOTE), touch_rd(st.gcc, TOUCH_RCG),
-@@ -608,6 +685,536 @@ touch_se_init(void)
+@@ -608,6 +685,541 @@ touch_se_init(void)
  	return true;
  }
  
@@ -184,6 +184,11 @@ index 2f09d3f..5ce72af 100644
 +static void
 +touch_fog_fill_tx(const uint8_t *tx, unsigned nt, unsigned *sent, unsigned depth)
 +{
++	/* Never trust a parsed depth above 16 words for the fill guard; a bad
++	 * guess would overrun the real FIFO and wedge the command. */
++	if (depth > 16u) {
++		depth = 16u;
++	}
 +	while (*sent * 4u < nt &&
 +	    (touch_rd(st.se, SE_TX_COUNT) & 0xffffffu) + 2u < depth) {
 +		unsigned base = *sent * 4u;
@@ -471,7 +476,7 @@ index 2f09d3f..5ce72af 100644
 +	/* SE_HW_PARAM_1: RX FIFO width in bits (29:24), depth in words (21:16). */
 +	depth = (rx >> 16) & 0x3fu;
 +	width = (rx >> 24) & 0x3fu;
-+	if (depth < 4u || depth > 64u) {
++	if (depth < 4u || depth > 16u) {
 +		depth = 16u;
 +	}
 +	if (width < 8u || width > 64u) {
@@ -656,7 +661,7 @@ index 2f09d3f..5ce72af 100644
  /* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
   * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
   * or PMIC request is taken until the inherited bootloader state is known.
-@@ -1569,15 +2176,20 @@ touch_thread(void *arg, wait_result_t result)
+@@ -1569,15 +2181,20 @@ touch_thread(void *arg, wait_result_t result)
  	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
  	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
  	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
@@ -680,7 +685,7 @@ index 2f09d3f..5ce72af 100644
  	st.stage = "clocks";
  	if (!touch_clocks()) {
  		goto out;
-@@ -1680,6 +2292,14 @@ out:
+@@ -1680,6 +2297,14 @@ out:
  		printf("SPES TOUCH: stopped at %s dead=%d id=%02x:%02x errors=%d/%d\n",
  		    st.stage ? st.stage : "?", st.dead, st.d_fid1, st.d_fid2,
  		    st.d_fe1, st.d_fe2);
@@ -695,7 +700,7 @@ index 2f09d3f..5ce72af 100644
  	}
  	if (st.diag && st.diag != 3) {
  		panic("SWEET TOUCH diag: stopped at '%s' dead=%d | gcc vote=%#x cfg=%#x cbcr=%#x | "
-@@ -1702,7 +2322,8 @@ sweet_touch_init(void)
+@@ -1702,7 +2327,8 @@ sweet_touch_init(void)
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
@@ -705,7 +710,7 @@ index 2f09d3f..5ce72af 100644
  	st.started = true;
  	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
  	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
-@@ -1734,5 +2355,11 @@ spes_touch_probe(void)
+@@ -1734,5 +2360,11 @@ spes_touch_probe(void)
  	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
  		sweet_touch_init();
  	}
