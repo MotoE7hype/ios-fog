@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
-index 2f09d3f..2b9fa96 100644
+index 2f09d3f..e64b01e 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
 @@ -23,6 +23,10 @@
@@ -100,7 +100,7 @@ index 2f09d3f..2b9fa96 100644
  	touch_wr(st.gcc, TOUCH_GCC_VOTE, touch_rd(st.gcc, TOUCH_GCC_VOTE) | 0x13c0u);
  	printf("SWEET TOUCH: gcc vote=%#x rcg=%#x cfg=%#x cbcr=%#x\n",
  	    touch_rd(st.gcc, TOUCH_GCC_VOTE), touch_rd(st.gcc, TOUCH_RCG),
-@@ -608,6 +676,404 @@ touch_se_init(void)
+@@ -608,6 +676,407 @@ touch_se_init(void)
  	return true;
  }
  
@@ -366,9 +366,12 @@ index 2f09d3f..2b9fa96 100644
 +		printf("SWEET TOUCH: SE0 has no GENI SPI firmware; probes skipped\n");
 +		return false;
 +	}
++	/* GENI_IF_DISABLE_RO bit 0 is not a failure: it says the SE was
++	 * configured for GPI DMA (spi-geni-qcom takes the same bit as "prefer
++	 * GPI" and still falls back to FIFO without a GPI channel). Clearing
++	 * SE_GENI_DMA_MODE_EN below selects the FIFO interface we have. */
 +	if (touch_rd(st.se, 0x64) & 1u) {
-+		printf("SWEET TOUCH: SE0 FIFO interface disabled; probes skipped\n");
-+		return false;
++		printf("SWEET TOUCH: SE0 gpi-preferred (ifdis=1); using FIFO mode\n");
 +	}
 +	if (touch_rd(st.se, SE_STATUS) & 0x1001u) {
 +		printf("SWEET TOUCH: SE0 already busy; probes skipped\n");
@@ -505,7 +508,7 @@ index 2f09d3f..2b9fa96 100644
  /* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
   * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
   * or PMIC request is taken until the inherited bootloader state is known.
-@@ -1569,15 +2035,20 @@ touch_thread(void *arg, wait_result_t result)
+@@ -1569,15 +2038,20 @@ touch_thread(void *arg, wait_result_t result)
  	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
  	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
  	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
@@ -529,7 +532,22 @@ index 2f09d3f..2b9fa96 100644
  	st.stage = "clocks";
  	if (!touch_clocks()) {
  		goto out;
-@@ -1702,7 +2173,8 @@ sweet_touch_init(void)
+@@ -1680,6 +2154,14 @@ out:
+ 		printf("SPES TOUCH: stopped at %s dead=%d id=%02x:%02x errors=%d/%d\n",
+ 		    st.stage ? st.stage : "?", st.dead, st.d_fid1, st.d_fid2,
+ 		    st.d_fe1, st.d_fe2);
++		/* Make the last line self-contained: a photo of it carries the
++		 * SE state even when the per-stage prints scrolled away. */
++		if (st.se) {
++			printf("SWEET TOUCH: fog diag ifdis=%#x fw=%#x status=%#x "
++			    "tx=%#x rx=%#x gcc=%#x/%#x/%#x\n",
++			    touch_rd(st.se, 0x64), st.d_fw, st.d_status, st.d_hwtx,
++			    st.d_hwrx, st.d_vote, st.d_cfg, st.d_cbcr);
++		}
+ 	}
+ 	if (st.diag && st.diag != 3) {
+ 		panic("SWEET TOUCH diag: stopped at '%s' dead=%d | gcc vote=%#x cfg=%#x cbcr=%#x | "
+@@ -1702,7 +2184,8 @@ sweet_touch_init(void)
  	}
  	DTEntry platform;
  	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
@@ -539,7 +557,7 @@ index 2f09d3f..2b9fa96 100644
  	st.started = true;
  	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
  	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
-@@ -1734,5 +2206,11 @@ spes_touch_probe(void)
+@@ -1734,5 +2217,11 @@ spes_touch_probe(void)
  	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
  		sweet_touch_init();
  	}
